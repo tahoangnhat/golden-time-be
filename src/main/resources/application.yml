@@ -1,0 +1,76 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: golden-time-api
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/golden_time}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:12345}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          connectiontimeout: 5000
+          timeout: 10000
+          writetimeout: 10000
+          starttls:
+            enable: true
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:8080}
+  jwt:
+    secret: ${JWT_SECRET:golden-time-dev-secret-change-in-production-min-32-chars!!}
+    access-token-minutes: ${JWT_ACCESS_TOKEN_MINUTES:15}
+    refresh-token-days: ${JWT_REFRESH_TOKEN_DAYS:14}
+    refresh-token-secure: ${JWT_REFRESH_TOKEN_SECURE:false}
+  ai:
+    service-url: ${AI_SERVICE_URL:}
+    api-key: ${AI_SERVICE_API_KEY:}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 60000
+  upload:
+    dir: ${UPLOAD_DIR:./uploads}
+    private-dir: ${PRIVATE_UPLOAD_DIR:./private-uploads}
+  mail:
+    from: ${MAIL_FROM:}
+  business:
+    portal-url: ${BUSINESS_PORTAL_URL:http://localhost:8080/business/login}
+  bootstrap:
+    admin-email: ${ADMIN_BOOTSTRAP_EMAIL:}
+    admin-password: ${ADMIN_BOOTSTRAP_PASSWORD:}
+    admin-name: ${ADMIN_BOOTSTRAP_NAME:Administrator}
+    admin-reset-password: ${ADMIN_BOOTSTRAP_RESET_PASSWORD:false}
+  prices:
+    crawl-cron: ${PRICE_CRAWL_CRON:0 0 */12 * * *}
+    crawl-on-startup: ${PRICE_CRAWL_ON_STARTUP:true}
+    user-agent: ${PRICE_CRAWLER_USER_AGENT:GoldenTimeFruitPriceBot/1.0}
+    timeout-ms: 12000
+    min-interval-seconds: 3
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.goldentime.api: INFO
