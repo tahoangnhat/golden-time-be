@@ -1,6 +1,7 @@
 package com.goldentime.api.business;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
@@ -23,6 +24,7 @@ import java.util.Map;
 @Service
 public class BusinessDecisionMailer {
     private static final Logger log = LoggerFactory.getLogger(BusinessDecisionMailer.class);
+    private static final ObjectMapper ERROR_JSON = new ObjectMapper();
     private static final String TOKEN_URL = "https://oauth2.googleapis.com/token";
     private static final String GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
 
@@ -79,8 +81,14 @@ public class BusinessDecisionMailer {
                 mailSender.send(mime);
             }
             return true;
+        } catch (GoogleRequestException exception) {
+            log.warn("Business decision was saved, but {} returned HTTP {} ({}).",
+                    exception.operation, exception.response.getStatusCode().value(),
+                    summarizeGoogleError(exception.response));
+            return false;
         } catch (RestClientResponseException exception) {
-            log.warn("Business decision was saved, but Gmail API returned HTTP {}.", exception.getStatusCode().value());
+            log.warn("Business decision was saved, but a Google request returned HTTP {} ({}).",
+                    exception.getStatusCode().value(), summarizeGoogleError(exception));
             return false;
         } catch (MessagingException | RuntimeException exception) {
             log.warn("Business decision was saved, but the notification email could not be sent.", exception);
@@ -107,13 +115,17 @@ public class BusinessDecisionMailer {
         message.writeTo(messageBytes);
         String rawMessage = Base64.getUrlEncoder().withoutPadding().encodeToString(messageBytes.toByteArray());
 
-        restClient.post()
-                .uri(GMAIL_SEND_URL)
-                .headers(headers -> headers.setBearerAuth(accessToken))
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("raw", rawMessage))
-                .retrieve()
-                .toBodilessEntity();
+        try {
+            restClient.post()
+                    .uri(GMAIL_SEND_URL)
+                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("raw", rawMessage))
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException exception) {
+            throw new GoogleRequestException("Gmail message send", exception);
+        }
     }
 
     private String refreshAccessToken() {
@@ -122,12 +134,17 @@ public class BusinessDecisionMailer {
         form.add("client_id", gmailClientId);
         form.add("client_secret", gmailClientSecret);
         form.add("refresh_token", gmailRefreshToken);
-        JsonNode response = restClient.post()
-                .uri(TOKEN_URL)
-                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(form)
-                .retrieve()
-                .body(JsonNode.class);
+        JsonNode response;
+        try {
+            response = restClient.post()
+                    .uri(TOKEN_URL)
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException exception) {
+            throw new GoogleRequestException("OAuth token refresh", exception);
+        }
         String accessToken = response == null ? "" : response.path("access_token").asText("");
         if (accessToken.isBlank()) throw new IllegalStateException("Google OAuth did not return an access token.");
         return accessToken;
@@ -139,6 +156,45 @@ public class BusinessDecisionMailer {
 
     private boolean gmailApiPartiallyConfigured() {
         return !gmailClientId.isBlank() || !gmailClientSecret.isBlank() || !gmailRefreshToken.isBlank();
+    }
+
+    private static String summarizeGoogleError(RestClientResponseException exception) {
+        try {
+            JsonNode root = ERROR_JSON.readTree(exception.getResponseBodyAsString());
+            JsonNode error = root.path("error");
+            if (error.isTextual()) {
+                String description = root.path("error_description").asText("");
+                return logValue(error.asText()) + (description.isBlank() ? "" : ": " + logValue(description));
+            }
+            if (error.isObject()) {
+                String status = error.path("status").asText("");
+                String reason = error.path("errors").path(0).path("reason").asText("");
+                String message = error.path("message").asText("");
+                String summary = status.isBlank() ? "" : status;
+                if (!reason.isBlank()) summary += (summary.isBlank() ? "" : ", ") + reason;
+                if (!message.isBlank()) summary += (summary.isBlank() ? "" : ": ") + logValue(message);
+                return summary.isBlank() ? "Google returned an unclassified error" : summary;
+            }
+        } catch (Exception ignored) {
+            // Do not log raw response bodies: they may contain sensitive data.
+        }
+        return "Google returned no structured error details";
+    }
+
+    private static String logValue(String value) {
+        String sanitized = value.replaceAll("[\\r\\n\\t]+", " ").trim();
+        return sanitized.length() <= 160 ? sanitized : sanitized.substring(0, 160);
+    }
+
+    private static final class GoogleRequestException extends RuntimeException {
+        private final String operation;
+        private final RestClientResponseException response;
+
+        private GoogleRequestException(String operation, RestClientResponseException response) {
+            super(operation + " failed");
+            this.operation = operation;
+            this.response = response;
+        }
     }
 
     private static String clean(String value) {
