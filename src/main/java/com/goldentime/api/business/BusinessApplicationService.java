@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -71,16 +73,10 @@ public class BusinessApplicationService {
         return jdbc.query("""
                 SELECT id, business_name, registration_number, contact_name, email, phone, address,
                        license_original_name, license_content_type, status, rejection_reason, created_at,
-                       reviewed_at, shop_id
+                       reviewed_at, shop_id, notification_sent
                 FROM business_applications
                 ORDER BY CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END, created_at DESC, id DESC
-                """, (rs, row) -> new ApplicationSummary(
-                rs.getLong("id"), rs.getString("business_name"), rs.getString("registration_number"),
-                rs.getString("contact_name"), rs.getString("email"), rs.getString("phone"), rs.getString("address"),
-                rs.getString("license_original_name"), rs.getString("license_content_type"), rs.getString("status"),
-                rs.getString("rejection_reason"), rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant(),
-                (Long) rs.getObject("shop_id"), null));
+                """, BusinessApplicationService::mapSummary);
     }
 
     @Transactional
@@ -119,14 +115,42 @@ public class BusinessApplicationService {
         String status = approved ? "APPROVED" : "REJECTED";
         jdbc.update("""
                 UPDATE business_applications
-                SET status = ?, rejection_reason = ?, password_hash = NULL, shop_id = ?, reviewed_by = ?, reviewed_at = NOW()
+                SET status = ?, rejection_reason = ?, password_hash = NULL, shop_id = ?, reviewed_by = ?,
+                    reviewed_at = NOW(), notification_sent = ?
                 WHERE id = ?
-                """, status, approved ? null : normalizedReason, shopId, adminId, id);
+                """, status, approved ? null : normalizedReason, shopId, adminId, notificationSent, id);
         Instant reviewedAt = Instant.now();
         return new ApplicationSummary(id, application.businessName(), application.registrationNumber(),
                 application.contactName(), application.email(), application.phone(), application.address(),
                 application.licenseOriginalName(), application.licenseContentType(), status,
                 approved ? null : normalizedReason, reviewedAt, reviewedAt, shopId, notificationSent);
+    }
+
+    @Transactional
+    public ApplicationSummary resendNotification(long id) {
+        List<ApplicationSummary> matches = jdbc.query("""
+                SELECT id, business_name, registration_number, contact_name, email, phone, address,
+                       license_original_name, license_content_type, status, rejection_reason, created_at,
+                       reviewed_at, shop_id, notification_sent
+                FROM business_applications WHERE id = ? FOR UPDATE
+                """, BusinessApplicationService::mapSummary, id);
+        if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy hồ sơ doanh nghiệp.");
+        ApplicationSummary application = matches.get(0);
+        if ("PENDING".equals(application.status())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Chỉ có thể gửi lại email sau khi hồ sơ đã được xử lý.");
+        }
+        if (Boolean.TRUE.equals(application.notificationSent())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Email thông báo của hồ sơ này đã được gửi.");
+        }
+
+        boolean approved = "APPROVED".equals(application.status());
+        boolean sent = mailer.sendDecision(application.email(), application.contactName(), application.businessName(),
+                approved, application.rejectionReason());
+        if (sent) jdbc.update("UPDATE business_applications SET notification_sent = TRUE WHERE id = ?", id);
+        return new ApplicationSummary(application.id(), application.businessName(), application.registrationNumber(),
+                application.contactName(), application.email(), application.phone(), application.address(),
+                application.licenseOriginalName(), application.licenseContentType(), application.status(),
+                application.rejectionReason(), application.createdAt(), application.reviewedAt(), application.shopId(), sent);
     }
 
     @Transactional(readOnly = true)
@@ -162,4 +186,14 @@ public class BusinessApplicationService {
     private record LockedApplication(long id, String businessName, String registrationNumber, String contactName,
                                      String email, String phone, String address, String passwordHash,
                                      String licenseOriginalName, String licenseContentType, String status) {}
+
+    private static ApplicationSummary mapSummary(ResultSet rs, int row) throws SQLException {
+        return new ApplicationSummary(rs.getLong("id"), rs.getString("business_name"),
+                rs.getString("registration_number"), rs.getString("contact_name"), rs.getString("email"),
+                rs.getString("phone"), rs.getString("address"), rs.getString("license_original_name"),
+                rs.getString("license_content_type"), rs.getString("status"), rs.getString("rejection_reason"),
+                rs.getTimestamp("created_at").toInstant(),
+                rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant(),
+                (Long) rs.getObject("shop_id"), rs.getBoolean("notification_sent"));
+    }
 }

@@ -1,30 +1,52 @@
 package com.goldentime.api.business;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.Map;
 
 @Service
 public class BusinessDecisionMailer {
     private static final Logger log = LoggerFactory.getLogger(BusinessDecisionMailer.class);
+    private static final String TOKEN_URL = "https://oauth2.googleapis.com/token";
+    private static final String GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
+
     private final JavaMailSender mailSender;
+    private final RestClient restClient;
     private final String from;
     private final String portalUrl;
+    private final String gmailClientId;
+    private final String gmailClientSecret;
+    private final String gmailRefreshToken;
 
     public BusinessDecisionMailer(JavaMailSender mailSender,
                                   @Value("${app.mail.from:}") String from,
-                                  @Value("${app.business.portal-url:}") String portalUrl) {
+                                  @Value("${app.business.portal-url:}") String portalUrl,
+                                  @Value("${app.mail.gmail.client-id:}") String gmailClientId,
+                                  @Value("${app.mail.gmail.client-secret:}") String gmailClientSecret,
+                                  @Value("${app.mail.gmail.refresh-token:}") String gmailRefreshToken) {
         this.mailSender = mailSender;
-        this.from = from == null ? "" : from.trim();
-        this.portalUrl = portalUrl == null ? "" : portalUrl.trim();
+        this.restClient = RestClient.create();
+        this.from = clean(from);
+        this.portalUrl = clean(portalUrl);
+        this.gmailClientId = clean(gmailClientId);
+        this.gmailClientSecret = clean(gmailClientSecret);
+        this.gmailRefreshToken = clean(gmailRefreshToken);
     }
 
     public boolean sendDecision(String email, String contactName, String businessName, boolean approved, String reason) {
@@ -32,6 +54,7 @@ public class BusinessDecisionMailer {
             log.warn("Skipping business decision email because MAIL_FROM is not configured.");
             return false;
         }
+
         String subject = approved
                 ? "Golden Time đã duyệt đăng ký doanh nghiệp của bạn"
                 : "Kết quả đăng ký doanh nghiệp Golden Time";
@@ -44,18 +67,81 @@ public class BusinessDecisionMailer {
                     + "Đăng ký doanh nghiệp “" + businessName + "” chưa được chấp nhận.\n"
                     + "Lý do: " + (reason == null || reason.isBlank() ? "Vui lòng liên hệ Golden Time để biết thêm thông tin." : reason.trim())
                     + "\n\nBạn có thể cập nhật hồ sơ và gửi đăng ký lại.";
+
         try {
-            MimeMessage mime = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(mime, false, StandardCharsets.UTF_8.name());
-            helper.setFrom(from);
-            helper.setTo(email);
-            helper.setSubject(subject);
-            helper.setText(message, false);
-            mailSender.send(mime);
+            MimeMessage mime = createMessage(email, subject, message);
+            if (gmailApiConfigured()) {
+                sendWithGmailApi(mime);
+            } else if (gmailApiPartiallyConfigured()) {
+                log.warn("Gmail API email was not sent because one or more GMAIL_OAUTH_* variables are missing.");
+                return false;
+            } else {
+                mailSender.send(mime);
+            }
             return true;
-        } catch (MessagingException | MailException exception) {
+        } catch (RestClientResponseException exception) {
+            log.warn("Business decision was saved, but Gmail API returned HTTP {}.", exception.getStatusCode().value());
+            return false;
+        } catch (MessagingException | RuntimeException exception) {
+            log.warn("Business decision was saved, but the notification email could not be sent.", exception);
+            return false;
+        } catch (Exception exception) {
             log.warn("Business decision was saved, but the notification email could not be sent.", exception);
             return false;
         }
+    }
+
+    private MimeMessage createMessage(String email, String subject, String message) throws MessagingException {
+        MimeMessage mime = mailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(mime, false, StandardCharsets.UTF_8.name());
+        helper.setFrom(from);
+        helper.setTo(email);
+        helper.setSubject(subject);
+        helper.setText(message, false);
+        return mime;
+    }
+
+    private void sendWithGmailApi(MimeMessage message) throws Exception {
+        String accessToken = refreshAccessToken();
+        ByteArrayOutputStream messageBytes = new ByteArrayOutputStream();
+        message.writeTo(messageBytes);
+        String rawMessage = Base64.getUrlEncoder().withoutPadding().encodeToString(messageBytes.toByteArray());
+
+        restClient.post()
+                .uri(GMAIL_SEND_URL)
+                .headers(headers -> headers.setBearerAuth(accessToken))
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("raw", rawMessage))
+                .retrieve()
+                .toBodilessEntity();
+    }
+
+    private String refreshAccessToken() {
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("grant_type", "refresh_token");
+        form.add("client_id", gmailClientId);
+        form.add("client_secret", gmailClientSecret);
+        form.add("refresh_token", gmailRefreshToken);
+        JsonNode response = restClient.post()
+                .uri(TOKEN_URL)
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(form)
+                .retrieve()
+                .body(JsonNode.class);
+        String accessToken = response == null ? "" : response.path("access_token").asText("");
+        if (accessToken.isBlank()) throw new IllegalStateException("Google OAuth did not return an access token.");
+        return accessToken;
+    }
+
+    private boolean gmailApiConfigured() {
+        return !gmailClientId.isBlank() && !gmailClientSecret.isBlank() && !gmailRefreshToken.isBlank();
+    }
+
+    private boolean gmailApiPartiallyConfigured() {
+        return !gmailClientId.isBlank() || !gmailClientSecret.isBlank() || !gmailRefreshToken.isBlank();
+    }
+
+    private static String clean(String value) {
+        return value == null ? "" : value.trim();
     }
 }

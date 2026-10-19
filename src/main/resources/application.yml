@@ -51,6 +51,10 @@ app:
     private-dir: ${PRIVATE_UPLOAD_DIR:./private-uploads}
   mail:
     from: ${MAIL_FROM:}
+    gmail:
+      client-id: ${GMAIL_OAUTH_CLIENT_ID:}
+      client-secret: ${GMAIL_OAUTH_CLIENT_SECRET:}
+      refresh-token: ${GMAIL_OAUTH_REFRESH_TOKEN:}
   business:
     portal-url: ${BUSINESS_PORTAL_URL:http://localhost:8080/business/login}
   bootstrap:

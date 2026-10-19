@@ -29,6 +29,14 @@ mvn spring-boot:run
 
 `ADMIN_BOOTSTRAP_EMAIL` và `ADMIN_BOOTSTRAP_PASSWORD` là tùy chọn. Nếu đặt cả hai, backend tạo tài khoản quản trị ban đầu khi email chưa tồn tại. Nếu tài khoản admin đã tồn tại, mặc định backend không thay đổi mật khẩu. Để chủ động đặt lại mật khẩu tài khoản admin hiện có, đặt thêm `ADMIN_BOOTSTRAP_RESET_PASSWORD=true` cho lần khởi động đó; thao tác cũng bật lại tài khoản và thu hồi refresh token cũ. Hãy bỏ biến reset sau khi khởi động xong để các lần chạy sau không tiếp tục đặt lại mật khẩu. Mật khẩu yêu cầu tối thiểu 12 ký tự; không đưa mật khẩu thật vào git hoặc gửi qua chat.
 
+### Gửi email bằng Gmail API trên Render Free
+
+Render Free chặn kết nối SMTP ra các cổng 25, 465 và 587. Backend hỗ trợ gửi email qua Gmail API HTTPS khi cấu hình đủ ba biến `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET` và `GMAIL_OAUTH_REFRESH_TOKEN`; khi đó không cần `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME` hoặc `MAIL_PASSWORD`. Giữ `MAIL_FROM` trùng với tài khoản Gmail đã cấp OAuth (hoặc một địa chỉ gửi thay thế đã được xác minh trong Gmail).
+
+Trong Google Cloud, bật Gmail API, cấu hình OAuth consent với scope `https://www.googleapis.com/auth/gmail.send`, rồi tạo OAuth client và refresh token cho tài khoản Gmail gửi thư. Đặt ba giá trị OAuth làm biến môi trường bí mật trên Render; không commit chúng vào repo và không gửi chúng qua chat. App OAuth ở trạng thái Testing cấp refresh token có thời hạn 7 ngày cho scope Gmail; để dùng lâu dài, cần chuyển app khỏi Testing và đáp ứng yêu cầu xác minh OAuth của Google nếu được yêu cầu.
+
+Sau khi deploy cấu hình, trang Admin > Cửa hàng có nút **Gửi lại email** cho hồ sơ đã duyệt/từ chối mà lần gửi trước thất bại. Backend lưu trạng thái gửi trong migration V7 để nút này chỉ hiện khi cần.
+
 Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Các biến cấu hình khác nằm tại `src/main/resources/application.yml`.
 
 ## API

@@ -54,5 +54,10 @@ public class BusinessApplicationAdminController {
         return applications.decide(id, request.approved(), request.reason(), CurrentUser.id(authentication));
     }
 
+    @PostMapping("/{id}/notification")
+    public BusinessApplicationService.ApplicationSummary resendNotification(@PathVariable long id) {
+        return applications.resendNotification(id);
+    }
+
     public record DecisionRequest(boolean approved, @Size(max = 1000) String reason) {}
 }
