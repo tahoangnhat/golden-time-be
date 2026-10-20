@@ -51,7 +51,8 @@ public class BusinessApplicationAdminController {
     public BusinessApplicationService.ApplicationSummary decide(@PathVariable long id,
                                                                  @Valid @RequestBody DecisionRequest request,
                                                                  Authentication authentication) {
-        return applications.decide(id, request.approved(), request.reason(), CurrentUser.id(authentication));
+        return applications.decide(id, request.approved(), request.reason(), request.latitude(),
+                request.longitude(), CurrentUser.id(authentication));
     }
 
     @PostMapping("/{id}/notification")
@@ -59,5 +60,6 @@ public class BusinessApplicationAdminController {
         return applications.resendNotification(id);
     }
 
-    public record DecisionRequest(boolean approved, @Size(max = 1000) String reason) {}
+    public record DecisionRequest(boolean approved, @Size(max = 1000) String reason,
+                                  Double latitude, Double longitude) {}
 }

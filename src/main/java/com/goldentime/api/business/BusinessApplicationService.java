@@ -80,7 +80,8 @@ public class BusinessApplicationService {
     }
 
     @Transactional
-    public ApplicationSummary decide(long id, boolean approved, String reason, long adminId) {
+    public ApplicationSummary decide(long id, boolean approved, String reason,
+                                     Double latitude, Double longitude, long adminId) {
         List<LockedApplication> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, contact_name, email, phone, address, password_hash,
                        license_original_name, license_content_type, status
@@ -94,6 +95,9 @@ public class BusinessApplicationService {
         if (!"PENDING".equals(application.status())) throw new ApiException(HttpStatus.CONFLICT, "Hồ sơ này đã được xử lý.");
         String normalizedReason = reason == null ? "" : reason.trim();
         if (!approved && normalizedReason.isBlank()) throw ApiException.badRequest("Hãy ghi lý do từ chối để gửi cho doanh nghiệp.");
+        if (approved && !validCoordinates(latitude, longitude)) {
+            throw ApiException.badRequest("Không xác định được tọa độ hợp lệ từ địa chỉ doanh nghiệp đã đăng ký.");
+        }
 
         Long shopId = null;
         if (approved) {
@@ -101,8 +105,8 @@ public class BusinessApplicationService {
             if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã được dùng cho một tài khoản khác.");
             shopId = jdbc.queryForObject("""
                     INSERT INTO shops (name, address, latitude, longitude, status)
-                    VALUES (?, ?, 0, 0, 'ACTIVE') RETURNING id
-                    """, Long.class, application.businessName(), application.address());
+                    VALUES (?, ?, ?, ?, 'ACTIVE') RETURNING id
+                    """, Long.class, application.businessName(), application.address(), latitude, longitude);
             Long userId = jdbc.queryForObject("""
                     INSERT INTO users (email, phone, password_hash, full_name, role, shop_id, enabled)
                     VALUES (?, ?, ?, ?, 'SHOP_OWNER', ?, TRUE) RETURNING id
@@ -174,6 +178,13 @@ public class BusinessApplicationService {
         if (phone.length() < 7 || phone.length() > 32) throw ApiException.badRequest("Số điện thoại không hợp lệ.");
         if (address.length() < 5 || address.length() > 512) throw ApiException.badRequest("Địa chỉ cần dài từ 5 đến 512 ký tự.");
         if (password == null || password.length() < 8 || password.length() > 128) throw ApiException.badRequest("Mật khẩu cần dài từ 8 đến 128 ký tự.");
+    }
+
+    private static boolean validCoordinates(Double latitude, Double longitude) {
+        return latitude != null && longitude != null
+                && Double.isFinite(latitude) && Double.isFinite(longitude)
+                && latitude >= -90 && latitude <= 90
+                && longitude >= -180 && longitude <= 180;
     }
 
     public record ApplicationReceipt(long id, String status, Instant createdAt) {}
