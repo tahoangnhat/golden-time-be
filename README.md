@@ -48,7 +48,7 @@ Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Các biến c
 - `GET /api/trace/{batchCode}`
 - `POST /api/orders`, `GET /api/orders/mine`, `GET /api/orders/{id}`
 - `GET /api/shops/{shopId}/reviews`, `POST /api/reviews`
-- `GET /api/articles`, `GET /api/articles/{slug}`; quản lý nội dung bằng `/api/admin/articles`
+- `GET /api/articles`, `GET /api/articles/{slug}`; quản lý nội dung bằng giao diện Admin > Bài viết hoặc API `/api/admin/articles` (chỉ ADMIN).
 - `/api/admin/users`, `/api/admin/shops`, `/api/admin/products`, `/api/admin/orders`, `/api/admin/reviews`, `/api/admin/scans`, `/api/admin/nutrition`, `/api/admin/traceability`, `/api/admin/overview`
 - `POST /api/business/applications` nhận thông tin doanh nghiệp và giấy phép kinh doanh dạng multipart; Admin xem/duyệt tại `/api/admin/business-applications` và tải giấy phép qua `/api/admin/business-applications/{id}/license`.
 - Cửa hàng có thể đọc `/api/shop/profile`, `/api/shop/products`, `/api/shop/orders`, `/api/shop/reviews`, `/api/shop/traceability`, `/api/shop/overview`; tài khoản phải có role `SHOP_OWNER` và liên kết với cửa hàng.
@@ -67,6 +67,8 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Lọc “gần tôi” dùng quyền định vị trình duyệt và tọa độ shop trong DB. Bản đồ là sơ đồ vị trí tương quan, chưa dùng bản đồ đường phố.
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
 
-Ảnh tải lên tối đa 10 MB; backend kiểm tra chữ ký PNG/JPEG/WebP và lưu trong `UPLOAD_DIR` để phục vụ qua `/uploads/`.
+Ảnh bài viết tải lên tối đa 10 MB; backend kiểm tra chữ ký PNG/JPEG/WebP rồi chuyển ảnh lên Cloudinary bằng yêu cầu có chữ ký. Ảnh trả về dùng URL HTTPS công khai và không phụ thuộc ổ đĩa tạm của Render. Tạo tài khoản Cloudinary, lấy Cloud name, API Key và API Secret trong Dashboard, rồi thêm các biến `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` và `CLOUDINARY_API_SECRET` vào Environment của dịch vụ backend trên Render. Chỉ API Secret cần được giữ kín; không đưa các thông tin này vào FE, Git hoặc gửi qua chat. Có thể dùng URL ảnh HTTPS công khai thay cho tải ảnh lên. Các ảnh tải lên cục bộ trước đây vẫn cần được tải lại lên Cloudinary nếu đang dùng đường dẫn `/uploads/articles/...`.
+
+Admin có thể tạo bản nháp, sửa, xuất bản/gỡ bài, đánh dấu nổi bật, thêm ảnh bìa và ảnh nội dung, định dạng tiêu đề, danh sách, liên kết, cỡ/phông/màu chữ, cùng mô tả SEO. Nội dung rich text được làm sạch theo danh sách thẻ và thuộc tính cho phép trước khi lưu và trả về công khai.
 
 Giấy phép kinh doanh tối đa 10 MB, nhận PDF/PNG/JPG và được lưu riêng trong `PRIVATE_UPLOAD_DIR`; tệp chỉ được Admin tải qua API có xác thực. Kết quả duyệt hoặc từ chối chỉ hoàn tất khi SMTP gửi được email. Cấu hình `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` và `MAIL_FROM` trước khi Admin xử lý hồ sơ; đặt `BUSINESS_PORTAL_URL` thành địa chỉ đăng nhập doanh nghiệp thực tế khi triển khai. Mật khẩu đăng ký được băm và chỉ dùng để tạo tài khoản doanh nghiệp sau khi chấp nhận hồ sơ.
