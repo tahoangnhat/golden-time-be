@@ -56,7 +56,7 @@ Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Các biến c
 
 Login/register cấp access token 15 phút trong JSON và refresh token 14 ngày trong cookie `HttpOnly`; FE tự làm mới access token khi gặp 401 rồi thử lại request một lần. Logout thu hồi refresh token. Mỗi endpoint riêng tư yêu cầu JWT và backend lấy user id từ token, không nhận user id do FE tự truyền. API đọc danh mục/cửa hàng/bài viết công khai vẫn không cần đăng nhập. Mỗi đơn chỉ chứa sản phẩm từ một cửa hàng. Đánh giá cần kèm một `orderId` hoặc `scanId` của chính người dùng.
 
-Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRESH_TOKEN_DAYS`. Cookie dùng `Secure=false` cho HTTP local; khi chạy HTTPS, đặt `JWT_REFRESH_TOKEN_SECURE=true`. Migration V5 tự tạo bảng lưu hash refresh token khi backend khởi động.
+Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRESH_TOKEN_DAYS`. Cookie dùng `Secure=false; SameSite=Lax` cho HTTP local. Khi frontend và API chạy khác site qua HTTPS (ví dụ Vercel và Render), đặt `JWT_REFRESH_TOKEN_SECURE=true`; backend sẽ gửi cookie `Secure; SameSite=None` để trình duyệt gửi refresh token trong fetch có credentials. Migration V5 tự tạo bảng lưu hash refresh token khi backend khởi động.
 
 ## Nguồn dữ liệu và giới hạn hiện tại
 

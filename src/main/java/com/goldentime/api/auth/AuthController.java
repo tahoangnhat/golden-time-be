@@ -121,7 +121,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from(REFRESH_COOKIE, session.value())
                 .httpOnly(true)
                 .secure(secureRefreshCookie)
-                .sameSite("Lax")
+                .sameSite(secureRefreshCookie ? "None" : "Lax")
                 .path("/api/auth")
                 .maxAge(Duration.between(java.time.Instant.now(), session.expiresAt()))
                 .build();
@@ -132,7 +132,7 @@ public class AuthController {
         ResponseCookie cookie = ResponseCookie.from(REFRESH_COOKIE, "")
                 .httpOnly(true)
                 .secure(secureRefreshCookie)
-                .sameSite("Lax")
+                .sameSite(secureRefreshCookie ? "None" : "Lax")
                 .path("/api/auth")
                 .maxAge(Duration.ZERO)
                 .build();
