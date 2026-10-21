@@ -9,6 +9,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -17,6 +19,7 @@ import java.util.List;
 
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
     private final JwtService jwtService;
 
     public JwtAuthenticationFilter(JwtService jwtService) {
@@ -32,6 +35,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 Claims claims = jwtService.parse(authorization.substring(7));
                 String tokenType = claims.get("token_type", String.class);
                 if (tokenType != null && !"access".equals(tokenType)) {
+                    log.warn("Rejected bearer token on {}: unexpected token type", request.getRequestURI());
                     SecurityContextHolder.clearContext();
                     chain.doFilter(request, response);
                     return;
@@ -41,7 +45,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         claims.getSubject(), null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
-            } catch (JwtException | IllegalArgumentException ignored) {
+            } catch (JwtException | IllegalArgumentException failure) {
+                // Log only the failure category; never include the bearer token itself.
+                log.warn("Rejected bearer token on {}: {}", request.getRequestURI(), failure.getClass().getSimpleName());
                 SecurityContextHolder.clearContext();
             }
         }
