@@ -122,6 +122,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(secureRefreshCookie)
                 .sameSite(secureRefreshCookie ? "None" : "Lax")
+                .partitioned(secureRefreshCookie)
                 .path("/api/auth")
                 .maxAge(Duration.between(java.time.Instant.now(), session.expiresAt()))
                 .build();
@@ -133,6 +134,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(secureRefreshCookie)
                 .sameSite(secureRefreshCookie ? "None" : "Lax")
+                .partitioned(secureRefreshCookie)
                 .path("/api/auth")
                 .maxAge(Duration.ZERO)
                 .build();

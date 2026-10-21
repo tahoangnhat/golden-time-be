@@ -7,6 +7,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -31,6 +32,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<Map<String, Object>> handleUploadLimit(MaxUploadSizeExceededException exception) {
         return response(HttpStatus.PAYLOAD_TOO_LARGE, "Tệp tải lên vượt quá giới hạn 10 MB.");
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    ResponseEntity<Map<String, Object>> handleMultipart(MultipartException exception) {
+        if (exception instanceof MaxUploadSizeExceededException exceeded) return handleUploadLimit(exceeded);
+        return response(HttpStatus.BAD_REQUEST, "Không đọc được tệp ảnh. Hãy chọn ảnh PNG, JPG hoặc WebP dưới 10 MB.");
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

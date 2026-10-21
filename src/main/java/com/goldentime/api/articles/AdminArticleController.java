@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.jsoup.Jsoup;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -99,8 +101,8 @@ public class AdminArticleController {
         if (jdbc.update("DELETE FROM articles WHERE id = ?", id) == 0) throw ApiException.notFound("Không tìm thấy bài viết.");
     }
 
-    @PostMapping("/images")
-    public ArticleImageStorage.StoredImage uploadImage(@RequestParam("file") MultipartFile file) {
+    @PostMapping(value = "/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadImage(@RequestPart("file") MultipartFile file) {
         return imageStorage.save(file);
     }
 
