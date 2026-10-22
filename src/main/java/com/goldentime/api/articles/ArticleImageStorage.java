@@ -1,29 +1,36 @@
 package com.goldentime.api.articles;
 
 import com.goldentime.api.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.http.client.MultipartBodyBuilder;
-import org.springframework.core.io.ByteArrayResource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Map;
 
 @Component
 public class ArticleImageStorage {
+    private static final Logger log = LoggerFactory.getLogger(ArticleImageStorage.class);
     private static final long MAX_BYTES = 10L * 1024 * 1024;
     private static final String CLOUDINARY_FOLDER = "goldentime/articles";
+    private static final ParameterizedTypeReference<Map<String, Object>> CLOUDINARY_RESPONSE =
+            new ParameterizedTypeReference<>() {};
 
     private final String cloudName;
     private final String apiKey;
@@ -33,9 +40,9 @@ public class ArticleImageStorage {
     public ArticleImageStorage(@Value("${app.upload.cloudinary.cloud-name:}") String cloudName,
                                @Value("${app.upload.cloudinary.api-key:}") String apiKey,
                                @Value("${app.upload.cloudinary.api-secret:}") String apiSecret) {
-        this.cloudName = cloudName;
-        this.apiKey = apiKey;
-        this.apiSecret = apiSecret;
+        this.cloudName = trim(cloudName);
+        this.apiKey = trim(apiKey);
+        this.apiSecret = trim(apiSecret);
     }
 
     public StoredImage save(MultipartFile file) {
@@ -48,43 +55,39 @@ public class ArticleImageStorage {
         try {
             byte[] bytes = file.getBytes();
             String contentType = detectType(bytes);
-            String extension = switch (contentType) {
-                case "image/png" -> "png";
-                case "image/webp" -> "webp";
-                default -> "jpg";
-            };
             long timestamp = Instant.now().getEpochSecond();
-            String signature = sign(timestamp);
 
-            MultipartBodyBuilder builder = new MultipartBodyBuilder();
-            builder.part("file", new ByteArrayResource(bytes) {
-                @Override
-                public String getFilename() {
-                    return "article." + extension;
-                }
-            }).contentType(MediaType.parseMediaType(contentType));
-            builder.part("api_key", apiKey);
-            builder.part("timestamp", Long.toString(timestamp));
-            builder.part("folder", CLOUDINARY_FOLDER);
-            builder.part("signature", signature);
+            MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+            form.add("file", "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(bytes));
+            form.add("api_key", apiKey);
+            form.add("timestamp", Long.toString(timestamp));
+            form.add("folder", CLOUDINARY_FOLDER);
+            form.add("signature", sign(timestamp));
 
-            Map<?, ?> response = restClient.post()
+            Map<String, Object> response = restClient.post()
                     .uri("https://api.cloudinary.com/v1_1/{cloudName}/image/upload", cloudName)
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(builder.build())
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
                     .retrieve()
-                    .body(Map.class);
+                    .body(CLOUDINARY_RESPONSE);
             Object secureUrl = response == null ? null : response.get("secure_url");
             if (!(secureUrl instanceof String url) || !url.startsWith("https://")) {
                 throw ApiException.unavailable("Cloudinary không trả về địa chỉ ảnh hợp lệ.");
             }
             return new StoredImage(url, contentType);
+        } catch (ApiException exception) {
+            throw exception;
         } catch (IOException exception) {
             throw ApiException.badRequest("Không thể đọc tệp ảnh đã chọn.");
         } catch (RestClientResponseException exception) {
-            throw ApiException.unavailable("Cloudinary chưa nhận được ảnh. Kiểm tra cấu hình dịch vụ lưu ảnh rồi thử lại.");
+            log.warn("Cloudinary rejected article image upload: {} {}", exception.getStatusCode(), exception.getResponseBodyAsString());
+            throw ApiException.unavailable("Cloudinary chưa nhận được ảnh. Kiểm tra CLOUDINARY_CLOUD_NAME, API key và API secret rồi thử lại.");
         } catch (RestClientException exception) {
+            log.warn("Could not reach Cloudinary for article image upload", exception);
             throw ApiException.unavailable("Không kết nối được với Cloudinary. Thử lại sau ít phút.");
+        } catch (RuntimeException exception) {
+            log.error("Unexpected article image upload failure", exception);
+            throw ApiException.unavailable("Không tải được ảnh lên Cloudinary. Thử lại hoặc dán URL HTTPS công khai.");
         }
     }
 
@@ -111,6 +114,10 @@ public class ArticleImageStorage {
             return "image/webp";
         }
         throw ApiException.badRequest("Ảnh phải là PNG, JPG hoặc WebP hợp lệ.");
+    }
+
+    private static String trim(String value) {
+        return value == null ? "" : value.trim();
     }
 
     public record StoredImage(String url, String contentType) {}
