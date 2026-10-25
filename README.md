@@ -37,9 +37,9 @@ Trong Google Cloud, bật Gmail API, cấu hình OAuth consent với scope `http
 
 Sau khi deploy cấu hình, trang Admin > Cửa hàng có nút **Gửi lại email** cho hồ sơ đã duyệt/từ chối mà lần gửi trước thất bại. Backend lưu trạng thái gửi trong migration V7 để nút này chỉ hiện khi cần.
 
-Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Để bật gợi ý địa chỉ và ghim vị trí trên Google Maps, đặt `VITE_GOOGLE_MAPS_API_KEY` trong môi trường build của FE; bật Maps JavaScript API và Places API (New), cấu hình billing, rồi giới hạn key theo website/referrer triển khai. Key này là key phía trình duyệt nên không dùng key bí mật của backend. Không commit key thật.
+Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Bản đồ dùng Leaflet và các ô bản đồ OpenStreetMap. Tìm kiếm địa chỉ dùng Nominatim qua backend khi người dùng chủ động bấm **Tìm** hoặc chọn ghim; Nominatim công cộng không cho phép autocomplete, backend giới hạn ở tối đa một yêu cầu mỗi 1,1 giây và lưu kết quả 24 giờ. Khi mở tab **Bản đồ**, FE xin vị trí trình duyệt rồi backend dùng Overpass API để tìm các cửa hàng thuộc danh sách thương hiệu trong bán kính 10 km; truy vấn được lưu đệm 6 giờ và tuần tự hóa tối thiểu 2,5 giây giữa các lần gọi. Dữ liệu ngoài hệ thống phụ thuộc vào mức độ cập nhật của OpenStreetMap và có thể không liệt kê đủ mọi chi nhánh. Không cần API key của Google. Nếu chạy nhiều bản sao backend hoặc lưu lượng lớn, chuyển sang dịch vụ tự quản/nhà cung cấp phù hợp với giới hạn dùng chung của dịch vụ công cộng.
 
-Hồ sơ đối tác lưu địa chỉ, tọa độ và mã địa điểm Google nếu có. Admin kiểm tra hoặc chỉnh vị trí khi duyệt; sau khi được duyệt, chủ cửa hàng có thể sửa địa chỉ và ghim tại **Hồ sơ doanh nghiệp**. Trang **Cửa hàng quanh bạn** dùng tọa độ đã lưu để lọc cửa hàng trong phạm vi 5 km.
+Hồ sơ đối tác lưu địa chỉ và tọa độ đã chọn. Admin kiểm tra hoặc chỉnh vị trí khi duyệt; sau khi được duyệt, chủ cửa hàng có thể sửa địa chỉ và ghim tại **Hồ sơ doanh nghiệp**. Trang **Cửa hàng quanh bạn** tự xin quyền vị trí khi mở và lọc cửa hàng đối tác cùng các chuỗi ngoài hệ thống trong phạm vi 10 km.
 
 ## API
 
@@ -66,7 +66,7 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Giá Bách Hóa Xanh và WinMart chỉ xuất hiện sau khi crawler đọc được giá từ các trang đã cấu hình. Backend lưu thời điểm, URL nguồn và lỗi crawl; khi crawl thất bại API không tạo giá thay thế.
 - `AI_SERVICE_URL` trống thì quét ảnh trả lỗi “chưa cấu hình dịch vụ phân tích ảnh”. Khi kết nối, endpoint AI nhận `multipart/form-data` field `file` và cần trả JSON gồm `fruitName`, `qualityScore`, `freshnessScore`, `ripenessLabel`, `sweetnessLabel`, `useWithin`, `qualityWarning`, `suggestion`, `confidence`. Có thể dùng `AI_SERVICE_API_KEY` cho Bearer token.
 - Đơn COD được ghi vào DB nhưng chưa tích hợp thanh toán, giao hàng hoặc trạng thái hoàn tất.
-- Lọc “gần tôi” dùng quyền định vị trình duyệt và tọa độ shop trong DB. Bản đồ là sơ đồ vị trí tương quan, chưa dùng bản đồ đường phố.
+- Bản đồ dùng Leaflet để hiển thị bản đồ đường phố OpenStreetMap, vị trí người dùng và các cửa hàng đã tìm được quanh đó.
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
 
 Ảnh bài viết tải lên tối đa 10 MB; backend kiểm tra chữ ký PNG/JPEG/WebP rồi chuyển ảnh lên Cloudinary bằng yêu cầu có chữ ký. Ảnh trả về dùng URL HTTPS công khai và không phụ thuộc ổ đĩa tạm của Render. Tạo tài khoản Cloudinary, lấy Cloud name, API Key và API Secret trong Dashboard, rồi thêm các biến `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` và `CLOUDINARY_API_SECRET` vào Environment của dịch vụ backend trên Render. Chỉ API Secret cần được giữ kín; không đưa các thông tin này vào FE, Git hoặc gửi qua chat. Có thể dùng URL ảnh HTTPS công khai thay cho tải ảnh lên. Các ảnh tải lên cục bộ trước đây vẫn cần được tải lại lên Cloudinary nếu đang dùng đường dẫn `/uploads/articles/...`.
