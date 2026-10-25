@@ -26,9 +26,12 @@ public class BusinessApplicationController {
             @RequestParam("email") String email,
             @RequestParam("phone") String phone,
             @RequestParam("address") String address,
+            @RequestParam(value = "latitude", required = false) Double latitude,
+            @RequestParam(value = "longitude", required = false) Double longitude,
+            @RequestParam(value = "googlePlaceId", required = false) String googlePlaceId,
             @RequestParam("password") String password,
             @RequestParam("licenseFile") MultipartFile licenseFile) {
         return applications.submit(businessName, registrationNumber, contactName, email,
-                phone, address, password, licenseFile);
+                phone, address, latitude, longitude, googlePlaceId, password, licenseFile);
     }
 }

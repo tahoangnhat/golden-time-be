@@ -52,7 +52,7 @@ public class BusinessApplicationAdminController {
                                                                  @Valid @RequestBody DecisionRequest request,
                                                                  Authentication authentication) {
         return applications.decide(id, request.approved(), request.reason(), request.latitude(),
-                request.longitude(), CurrentUser.id(authentication));
+                request.longitude(), request.address(), request.googlePlaceId(), CurrentUser.id(authentication));
     }
 
     @PostMapping("/{id}/notification")
@@ -61,5 +61,6 @@ public class BusinessApplicationAdminController {
     }
 
     public record DecisionRequest(boolean approved, @Size(max = 1000) String reason,
-                                  Double latitude, Double longitude) {}
+                                  Double latitude, Double longitude, @Size(max = 512) String address,
+                                  @Size(max = 255) String googlePlaceId) {}
 }

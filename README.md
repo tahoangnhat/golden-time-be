@@ -37,7 +37,9 @@ Trong Google Cloud, bật Gmail API, cấu hình OAuth consent với scope `http
 
 Sau khi deploy cấu hình, trang Admin > Cửa hàng có nút **Gửi lại email** cho hồ sơ đã duyệt/từ chối mà lần gửi trước thất bại. Backend lưu trạng thái gửi trong migration V7 để nút này chỉ hiện khi cần.
 
-Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Các biến cấu hình khác nằm tại `src/main/resources/application.yml`.
+Có thể ghi đè API base URL ở FE bằng `VITE_API_BASE_URL`. Để bật gợi ý địa chỉ và ghim vị trí trên Google Maps, đặt `VITE_GOOGLE_MAPS_API_KEY` trong môi trường build của FE; bật Maps JavaScript API và Places API (New), cấu hình billing, rồi giới hạn key theo website/referrer triển khai. Key này là key phía trình duyệt nên không dùng key bí mật của backend. Không commit key thật.
+
+Hồ sơ đối tác lưu địa chỉ, tọa độ và mã địa điểm Google nếu có. Admin kiểm tra hoặc chỉnh vị trí khi duyệt; sau khi được duyệt, chủ cửa hàng có thể sửa địa chỉ và ghim tại **Hồ sơ doanh nghiệp**. Trang **Cửa hàng quanh bạn** dùng tọa độ đã lưu để lọc cửa hàng trong phạm vi 5 km.
 
 ## API
 

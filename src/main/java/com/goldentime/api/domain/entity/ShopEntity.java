@@ -18,6 +18,9 @@ public class ShopEntity {
 
     private String address;
 
+    @Column(name = "google_place_id", length = 255)
+    private String googlePlaceId;
+
     @Column(nullable = false)
     private Double latitude;
 
@@ -68,6 +71,14 @@ public class ShopEntity {
 
     public void setAddress(String address) {
         this.address = address;
+    }
+
+    public String getGooglePlaceId() {
+        return googlePlaceId;
+    }
+
+    public void setGooglePlaceId(String googlePlaceId) {
+        this.googlePlaceId = googlePlaceId;
     }
 
     public Double getLatitude() {

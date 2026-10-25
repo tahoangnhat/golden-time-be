@@ -2,9 +2,15 @@ package com.goldentime.api.partner;
 
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.security.CurrentUser;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -13,7 +19,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 
-/** Read-only partner views sourced from the authenticated shop owner's records. */
+/** Partner views sourced from the authenticated shop owner's records. */
 @RestController
 @RequestMapping("/api/shop")
 @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
@@ -27,6 +33,26 @@ public class PartnerDataController {
     @GetMapping("/profile")
     public ShopProfile profile(Authentication authentication) {
         return shop(CurrentUser.id(authentication));
+    }
+
+    @PutMapping("/profile")
+    public ShopProfile updateProfile(Authentication authentication, @Valid @RequestBody ShopLocationUpdate request) {
+        if (!validCoordinates(request.latitude(), request.longitude())) {
+            throw ApiException.badRequest("Vị trí cửa hàng không hợp lệ.");
+        }
+        String address = request.address().trim();
+        if (address.length() < 5) throw ApiException.badRequest("Địa chỉ cửa hàng cần dài ít nhất 5 ký tự.");
+        String placeId = request.googlePlaceId() == null || request.googlePlaceId().isBlank()
+                ? null : request.googlePlaceId().trim();
+        if (placeId != null && placeId.length() > 255) throw ApiException.badRequest("Mã địa điểm Google Maps không hợp lệ.");
+
+        long userId = CurrentUser.id(authentication);
+        long shopId = shopId(userId);
+        jdbc.update("""
+                UPDATE shops SET address = ?, latitude = ?, longitude = ?, google_place_id = ?
+                WHERE id = ?
+                """, address, request.latitude(), request.longitude(), placeId, shopId);
+        return shop(userId);
     }
 
     @GetMapping("/products")
@@ -128,13 +154,13 @@ public class PartnerDataController {
 
     private ShopProfile shop(long userId) {
         List<ShopProfile> shops = jdbc.query("""
-                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status,
+                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.google_place_id, s.status,
                        s.description, s.rating_avg, s.review_count
                 FROM shops s LEFT JOIN users u ON u.id = ?
                 WHERE s.owner_user_id = ? OR s.id = u.shop_id
                 ORDER BY s.id LIMIT 1
                 """, (rs, row) -> new ShopProfile(rs.getLong("id"), rs.getString("name"), rs.getString("address"),
-                rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("status"),
+                rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("google_place_id"), rs.getString("status"),
                 rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count")), userId, userId);
         if (shops.isEmpty()) throw ApiException.forbidden("Tài khoản chưa được liên kết với cửa hàng.");
         return shops.get(0);
@@ -144,8 +170,17 @@ public class PartnerDataController {
         return shop(userId).id();
     }
 
+    private static boolean validCoordinates(Double latitude, Double longitude) {
+        return latitude != null && longitude != null
+                && Double.isFinite(latitude) && Double.isFinite(longitude)
+                && latitude >= -90 && latitude <= 90
+                && longitude >= -180 && longitude <= 180;
+    }
+
     public record ShopProfile(long id, String name, String address, double latitude, double longitude,
-                              String status, String description, BigDecimal rating, int reviewCount) {}
+                              String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount) {}
+    public record ShopLocationUpdate(@NotBlank @Size(max = 512) String address, @NotNull Double latitude,
+                                    @NotNull Double longitude, @Size(max = 255) String googlePlaceId) {}
     public record ShopProduct(long id, long fruitId, String fruitName, String emoji, String category,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
                               String status, String batchCode) {}

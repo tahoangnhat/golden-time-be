@@ -33,7 +33,8 @@ public class BusinessApplicationService {
 
     @Transactional
     public ApplicationReceipt submit(String businessName, String registrationNumber, String contactName,
-                                     String emailValue, String phone, String address, String password,
+                                     String emailValue, String phone, String address, Double latitude,
+                                     Double longitude, String googlePlaceId, String password,
                                      MultipartFile licenseFile) {
         String email = emailValue.trim().toLowerCase(Locale.ROOT);
         String name = businessName.trim();
@@ -42,6 +43,11 @@ public class BusinessApplicationService {
         String normalizedPhone = phone.trim();
         String normalizedAddress = address.trim();
         validate(name, registration, contact, email, normalizedPhone, normalizedAddress, password);
+        if ((latitude == null) != (longitude == null)
+                || (latitude != null && !validCoordinates(latitude, longitude))) {
+            throw ApiException.badRequest("Tọa độ cửa hàng không hợp lệ.");
+        }
+        String normalizedPlaceId = normalizePlaceId(googlePlaceId);
 
         Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, email);
         if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã có tài khoản.");
@@ -53,11 +59,13 @@ public class BusinessApplicationService {
             Long id = jdbc.queryForObject("""
                     INSERT INTO business_applications
                         (business_name, registration_number, contact_name, email, phone, address,
+                         latitude, longitude, google_place_id,
                          password_hash, license_file, license_original_name, license_content_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
                     """, Long.class, name, registration, contact, email, normalizedPhone, normalizedAddress,
-                    passwordEncoder.encode(password), license.storedName(), license.originalName(), license.contentType());
+                    latitude, longitude, normalizedPlaceId, passwordEncoder.encode(password), license.storedName(),
+                    license.originalName(), license.contentType());
             return new ApplicationReceipt(id, "PENDING", Instant.now());
         } catch (DuplicateKeyException exception) {
             licenseStorage.delete(license.storedName());
@@ -73,7 +81,7 @@ public class BusinessApplicationService {
         return jdbc.query("""
                 SELECT id, business_name, registration_number, contact_name, email, phone, address,
                        license_original_name, license_content_type, status, rejection_reason, created_at,
-                       reviewed_at, shop_id, notification_sent
+                       reviewed_at, shop_id, notification_sent, latitude, longitude, google_place_id
                 FROM business_applications
                 ORDER BY CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END, created_at DESC, id DESC
                 """, BusinessApplicationService::mapSummary);
@@ -81,21 +89,30 @@ public class BusinessApplicationService {
 
     @Transactional
     public ApplicationSummary decide(long id, boolean approved, String reason,
-                                     Double latitude, Double longitude, long adminId) {
+                                     Double latitude, Double longitude, String address,
+                                     String googlePlaceId, long adminId) {
         List<LockedApplication> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, contact_name, email, phone, address, password_hash,
-                       license_original_name, license_content_type, status
+                       license_original_name, license_content_type, status, latitude, longitude, google_place_id
                 FROM business_applications WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new LockedApplication(rs.getLong("id"), rs.getString("business_name"),
                 rs.getString("registration_number"), rs.getString("contact_name"), rs.getString("email"),
                 rs.getString("phone"), rs.getString("address"), rs.getString("password_hash"),
-                rs.getString("license_original_name"), rs.getString("license_content_type"), rs.getString("status")), id);
+                rs.getString("license_original_name"), rs.getString("license_content_type"), rs.getString("status"),
+                (Double) rs.getObject("latitude"), (Double) rs.getObject("longitude"), rs.getString("google_place_id")), id);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy hồ sơ doanh nghiệp.");
         LockedApplication application = matches.get(0);
         if (!"PENDING".equals(application.status())) throw new ApiException(HttpStatus.CONFLICT, "Hồ sơ này đã được xử lý.");
         String normalizedReason = reason == null ? "" : reason.trim();
         if (!approved && normalizedReason.isBlank()) throw ApiException.badRequest("Hãy ghi lý do từ chối để gửi cho doanh nghiệp.");
-        if (approved && !validCoordinates(latitude, longitude)) {
+        String normalizedAddress = address == null ? application.address() : address.trim();
+        Double resolvedLatitude = latitude == null ? application.latitude() : latitude;
+        Double resolvedLongitude = longitude == null ? application.longitude() : longitude;
+        String resolvedPlaceId = normalizePlaceId(googlePlaceId);
+        if (approved && (normalizedAddress.length() < 5 || normalizedAddress.length() > 512)) {
+            throw ApiException.badRequest("Địa chỉ cửa hàng cần dài từ 5 đến 512 ký tự.");
+        }
+        if (approved && !validCoordinates(resolvedLatitude, resolvedLongitude)) {
             throw ApiException.badRequest("Không xác định được tọa độ hợp lệ từ địa chỉ doanh nghiệp đã đăng ký.");
         }
 
@@ -104,9 +121,10 @@ public class BusinessApplicationService {
             Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, application.email());
             if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã được dùng cho một tài khoản khác.");
             shopId = jdbc.queryForObject("""
-                    INSERT INTO shops (name, address, latitude, longitude, status)
-                    VALUES (?, ?, ?, ?, 'ACTIVE') RETURNING id
-                    """, Long.class, application.businessName(), application.address(), latitude, longitude);
+                    INSERT INTO shops (name, address, latitude, longitude, google_place_id, status)
+                    VALUES (?, ?, ?, ?, ?, 'ACTIVE') RETURNING id
+                    """, Long.class, application.businessName(), normalizedAddress, resolvedLatitude,
+                    resolvedLongitude, resolvedPlaceId);
             Long userId = jdbc.queryForObject("""
                     INSERT INTO users (email, phone, password_hash, full_name, role, shop_id, enabled)
                     VALUES (?, ?, ?, ?, 'SHOP_OWNER', ?, TRUE) RETURNING id
@@ -120,14 +138,20 @@ public class BusinessApplicationService {
         jdbc.update("""
                 UPDATE business_applications
                 SET status = ?, rejection_reason = ?, password_hash = NULL, shop_id = ?, reviewed_by = ?,
-                    reviewed_at = NOW(), notification_sent = ?
+                    reviewed_at = NOW(), notification_sent = ?,
+                    address = ?, latitude = ?, longitude = ?, google_place_id = ?
                 WHERE id = ?
-                """, status, approved ? null : normalizedReason, shopId, adminId, notificationSent, id);
+                """, status, approved ? null : normalizedReason, shopId, adminId, notificationSent,
+                approved ? normalizedAddress : application.address(),
+                approved ? resolvedLatitude : application.latitude(), approved ? resolvedLongitude : application.longitude(),
+                approved ? resolvedPlaceId : application.googlePlaceId(), id);
         Instant reviewedAt = Instant.now();
         return new ApplicationSummary(id, application.businessName(), application.registrationNumber(),
-                application.contactName(), application.email(), application.phone(), application.address(),
+                application.contactName(), application.email(), application.phone(), approved ? normalizedAddress : application.address(),
                 application.licenseOriginalName(), application.licenseContentType(), status,
-                approved ? null : normalizedReason, reviewedAt, reviewedAt, shopId, notificationSent);
+                approved ? null : normalizedReason, reviewedAt, reviewedAt, shopId, notificationSent,
+                approved ? resolvedLatitude : application.latitude(),
+                approved ? resolvedLongitude : application.longitude(), approved ? resolvedPlaceId : application.googlePlaceId());
     }
 
     @Transactional
@@ -135,7 +159,7 @@ public class BusinessApplicationService {
         List<ApplicationSummary> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, contact_name, email, phone, address,
                        license_original_name, license_content_type, status, rejection_reason, created_at,
-                       reviewed_at, shop_id, notification_sent
+                       reviewed_at, shop_id, notification_sent, latitude, longitude, google_place_id
                 FROM business_applications WHERE id = ? FOR UPDATE
                 """, BusinessApplicationService::mapSummary, id);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy hồ sơ doanh nghiệp.");
@@ -154,7 +178,8 @@ public class BusinessApplicationService {
         return new ApplicationSummary(application.id(), application.businessName(), application.registrationNumber(),
                 application.contactName(), application.email(), application.phone(), application.address(),
                 application.licenseOriginalName(), application.licenseContentType(), application.status(),
-                application.rejectionReason(), application.createdAt(), application.reviewedAt(), application.shopId(), sent);
+                application.rejectionReason(), application.createdAt(), application.reviewedAt(), application.shopId(), sent,
+                application.latitude(), application.longitude(), application.googlePlaceId());
     }
 
     @Transactional(readOnly = true)
@@ -187,16 +212,25 @@ public class BusinessApplicationService {
                 && longitude >= -180 && longitude <= 180;
     }
 
+    private static String normalizePlaceId(String placeId) {
+        if (placeId == null || placeId.isBlank()) return null;
+        String normalized = placeId.trim();
+        if (normalized.length() > 255) throw ApiException.badRequest("Mã địa điểm Google Maps không hợp lệ.");
+        return normalized;
+    }
+
     public record ApplicationReceipt(long id, String status, Instant createdAt) {}
     public record ApplicationSummary(long id, String businessName, String registrationNumber, String contactName,
                                     String email, String phone, String address, String licenseOriginalName,
                                     String licenseContentType, String status, String rejectionReason,
-                                    Instant createdAt, Instant reviewedAt, Long shopId, Boolean notificationSent) {}
+                                    Instant createdAt, Instant reviewedAt, Long shopId, Boolean notificationSent,
+                                    Double latitude, Double longitude, String googlePlaceId) {}
     public record LicenseDocument(Resource resource, String originalName, String contentType) {}
     private record LicenseMetadata(String storedName, String originalName, String contentType) {}
     private record LockedApplication(long id, String businessName, String registrationNumber, String contactName,
                                      String email, String phone, String address, String passwordHash,
-                                     String licenseOriginalName, String licenseContentType, String status) {}
+                                     String licenseOriginalName, String licenseContentType, String status,
+                                     Double latitude, Double longitude, String googlePlaceId) {}
 
     private static ApplicationSummary mapSummary(ResultSet rs, int row) throws SQLException {
         return new ApplicationSummary(rs.getLong("id"), rs.getString("business_name"),
@@ -205,6 +239,7 @@ public class BusinessApplicationService {
                 rs.getString("license_content_type"), rs.getString("status"), rs.getString("rejection_reason"),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant(),
-                (Long) rs.getObject("shop_id"), rs.getBoolean("notification_sent"));
+                (Long) rs.getObject("shop_id"), rs.getBoolean("notification_sent"),
+                (Double) rs.getObject("latitude"), (Double) rs.getObject("longitude"), rs.getString("google_place_id"));
     }
 }
