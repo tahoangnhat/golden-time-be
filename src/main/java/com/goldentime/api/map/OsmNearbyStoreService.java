@@ -2,12 +2,15 @@ package com.goldentime.api.map;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.goldentime.api.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -23,7 +26,8 @@ public class OsmNearbyStoreService {
     private static final long MIN_REQUEST_INTERVAL_MS = 2_500;
     private static final long CACHE_TTL_MS = Duration.ofHours(6).toMillis();
     private static final int MAX_CACHE_ENTRIES = 100;
-    private static final String TARGET_BRANDS = "Klever Fruit|F5 Fruit Shop|F5 Fruits?|360 ?Fruit|Tony Fruit|Morning Fruit|EUS Fruit|Farmers Market|Phu ?Hoa Fresh|Organica|Nông Sản Xanh|Nong San Xanh|WinMart\\+?|WinMart Plus|Bách Hóa Xanh|Bach Hoa Xanh|Co\\.?opmart|Coopmart|Co\\.?op Food|Coop Food|GO!|Tops Market|AEON|Lotte Mart|MM Mega Market";
+    private static final String TARGET_BRANDS = "Klever Fruit|F5 Fruit Shop|F5 Fruits?|360 ?Fruit|Tony Fruit|Morning Fruit|EUS Fruit|Farmers Market|Phu ?Hoa Fresh|Organica|Nông Sản Xanh|Nong San Xanh|WinMart\\\\+?|WinMart Plus|Bách Hóa Xanh|Bach Hoa Xanh|Co\\\\.?opmart|Coopmart|Co\\\\.?op Food|Coop Food|GO!|Tops Market|AEON|Lotte Mart|MM Mega Market";
+    private static final Logger log = LoggerFactory.getLogger(OsmNearbyStoreService.class);
 
     private final RestClient restClient;
     private final Object requestLock = new Object();
@@ -72,7 +76,11 @@ public class OsmNearbyStoreService {
             MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
             body.add("data", query);
             response = requestOverpass(body);
+        } catch (RestClientResponseException exception) {
+            log.warn("Overpass returned HTTP status {} for a nearby-store query.", exception.getStatusCode().value());
+            throw ApiException.unavailable("Chưa lấy được danh sách cửa hàng OpenStreetMap. Vui lòng thử lại sau.");
         } catch (RestClientException exception) {
+            log.warn("Could not reach Overpass for a nearby-store query ({}).", exception.getClass().getSimpleName());
             throw ApiException.unavailable("Chưa lấy được danh sách cửa hàng OpenStreetMap. Vui lòng thử lại sau.");
         }
         if (response == null) throw ApiException.unavailable("OpenStreetMap không trả dữ liệu cửa hàng.");
