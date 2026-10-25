@@ -44,7 +44,8 @@ public class OsmGeocodingService {
                 .queryParam("addressdetails", "1")
                 .queryParam("countrycodes", "vn")
                 .queryParam("limit", "5")
-                .queryParam("q", normalized));
+                .queryParam("q", normalized)
+                .build());
     }
 
     public JsonNode reverse(double latitude, double longitude) {
@@ -59,7 +60,8 @@ public class OsmGeocodingService {
                 .queryParam("addressdetails", "1")
                 .queryParam("zoom", "18")
                 .queryParam("lat", lat)
-                .queryParam("lon", lon));
+                .queryParam("lon", lon)
+                .build());
     }
 
     private JsonNode cached(String key, Function<UriBuilder, java.net.URI> uriBuilder) {
