@@ -24,6 +24,7 @@ import java.util.Map;
 public class OsmNearbyStoreService {
     private static final double SEARCH_RADIUS_METERS = 11_500;
     private static final long MIN_REQUEST_INTERVAL_MS = 2_500;
+    private static final int MAX_UPSTREAM_ATTEMPTS = 3;
     private static final long CACHE_TTL_MS = Duration.ofHours(6).toMillis();
     private static final int MAX_CACHE_ENTRIES = 100;
     private static final String TARGET_BRANDS = "Klever Fruit|F5 Fruit Shop|F5 Fruits?|360 ?Fruit|Tony Fruit|Morning Fruit|EUS Fruit|Farmers Market|Phu ?Hoa Fresh|Organica|Nông Sản Xanh|Nong San Xanh|WinMart\\\\+?|WinMart Plus|Bách Hóa Xanh|Bach Hoa Xanh|Co\\\\.?opmart|Coopmart|Co\\\\.?op Food|Coop Food|GO!|Tops Market|AEON|Lotte Mart|MM Mega Market";
@@ -143,22 +144,35 @@ public class OsmNearbyStoreService {
 
     private JsonNode requestOverpass(MultiValueMap<String, String> body) {
         synchronized (requestLock) {
-            long delay = nextRequestAt - System.currentTimeMillis();
-            if (delay > 0) {
+            for (int attempt = 1; attempt <= MAX_UPSTREAM_ATTEMPTS; attempt++) {
+                long delay = nextRequestAt - System.currentTimeMillis();
+                if (delay > 0) {
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw ApiException.unavailable("Yêu cầu cửa hàng gần bạn đã bị gián đoạn.");
+                    }
+                }
+                nextRequestAt = System.currentTimeMillis() + MIN_REQUEST_INTERVAL_MS;
                 try {
-                    Thread.sleep(delay);
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                    throw ApiException.unavailable("Yêu cầu cửa hàng gần bạn đã bị gián đoạn.");
+                    return restClient.post()
+                            .uri("/api/interpreter")
+                            .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                            .body(body)
+                            .retrieve()
+                            .body(JsonNode.class);
+                } catch (RestClientResponseException exception) {
+                    int status = exception.getStatusCode().value();
+                    boolean retryable = status == 408 || status == 429 || exception.getStatusCode().is5xxServerError();
+                    if (!retryable || attempt == MAX_UPSTREAM_ATTEMPTS) throw exception;
+                    log.warn("Overpass returned HTTP status {} for a nearby-store query; retry {}/{}.", status, attempt, MAX_UPSTREAM_ATTEMPTS - 1);
+                } catch (RestClientException exception) {
+                    if (attempt == MAX_UPSTREAM_ATTEMPTS) throw exception;
+                    log.warn("Overpass request failed ({}) for a nearby-store query; retry {}/{}.", exception.getClass().getSimpleName(), attempt, MAX_UPSTREAM_ATTEMPTS - 1);
                 }
             }
-            nextRequestAt = System.currentTimeMillis() + MIN_REQUEST_INTERVAL_MS;
-            return restClient.post()
-                    .uri("/api/interpreter")
-                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                    .body(body)
-                    .retrieve()
-                    .body(JsonNode.class);
+            throw ApiException.unavailable("Không lấy được dữ liệu cửa hàng từ Overpass.");
         }
     }
 
