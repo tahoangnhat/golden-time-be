@@ -39,12 +39,14 @@ import java.util.List;
 public class PartnerDataController {
     private static final String SHOP_PRODUCT_SELECT = """
             SELECT p.id, f.id AS fruit_id, f.name AS fruit_name, f.emoji, f.category,
+                   p.is_seasonal, p.is_prepared,
                    p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code, p.image_url
             FROM shop_products p JOIN fruits f ON f.id = p.fruit_id
             """;
     private static final RowMapper<ShopProduct> SHOP_PRODUCT_MAPPER = (rs, row) -> new ShopProduct(
             rs.getLong("id"), rs.getLong("fruit_id"), rs.getString("fruit_name"), rs.getString("emoji"),
-            rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
+            rs.getString("category"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"),
+            rs.getString("display_name"), rs.getLong("price_per_kg"),
             rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
             rs.getString("batch_code"), rs.getString("image_url"));
 
@@ -102,10 +104,10 @@ public class PartnerDataController {
         validateFruit(request.fruitId());
         String imageUrl = validateProductImageUrl(request.imageUrl());
         long productId = jdbc.queryForObject("""
-                INSERT INTO shop_products (shop_id, fruit_id, display_name, price_per_kg, stock_kg, status, image_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shop_products (shop_id, fruit_id, is_seasonal, is_prepared, display_name, price_per_kg, stock_kg, status, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
-                """, Long.class, shopId, request.fruitId(), request.displayName().trim(), request.pricePerKg(),
+                """, Long.class, shopId, request.fruitId(), request.seasonal(), request.prepared(), request.displayName().trim(), request.pricePerKg(),
                 request.stockKg(), productStatus(request.onSale(), request.stockKg()), imageUrl);
         return shopProduct(shopId, productId);
     }
@@ -118,9 +120,9 @@ public class PartnerDataController {
         String imageUrl = validateProductImageUrl(request.imageUrl());
         int updated = jdbc.update("""
                 UPDATE shop_products
-                SET fruit_id = ?, display_name = ?, price_per_kg = ?, stock_kg = ?, status = ?, image_url = ?
+                SET fruit_id = ?, is_seasonal = ?, is_prepared = ?, display_name = ?, price_per_kg = ?, stock_kg = ?, status = ?, image_url = ?
                 WHERE id = ? AND shop_id = ?
-                """, request.fruitId(), request.displayName().trim(), request.pricePerKg(), request.stockKg(),
+                """, request.fruitId(), request.seasonal(), request.prepared(), request.displayName().trim(), request.pricePerKg(), request.stockKg(),
                 productStatus(request.onSale(), request.stockKg()), imageUrl, productId, shopId);
         if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         return shopProduct(shopId, productId);
@@ -271,11 +273,14 @@ public class PartnerDataController {
                                     @NotNull Double longitude, @Size(max = 255) String googlePlaceId) {}
     public record ShopProductWrite(@NotNull @Positive Long fruitId,
                                    @NotBlank @Size(max = 255) String displayName,
+                                   @NotNull Boolean seasonal,
+                                   @NotNull Boolean prepared,
                                    @NotNull @Positive @Digits(integer = 12, fraction = 0) Long pricePerKg,
                                    @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
                                    @NotNull Boolean onSale,
                                    @NotBlank @Size(max = 1024) String imageUrl) {}
     public record ShopProduct(long id, long fruitId, String fruitName, String emoji, String category,
+                              boolean seasonal, boolean prepared,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
                               String status, String batchCode, String imageUrl) {}
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
