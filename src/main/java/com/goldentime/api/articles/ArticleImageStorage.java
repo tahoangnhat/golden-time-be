@@ -28,7 +28,8 @@ import java.util.Map;
 public class ArticleImageStorage {
     private static final Logger log = LoggerFactory.getLogger(ArticleImageStorage.class);
     private static final long MAX_BYTES = 10L * 1024 * 1024;
-    private static final String CLOUDINARY_FOLDER = "goldentime/articles";
+    private static final String ARTICLE_FOLDER = "goldentime/articles";
+    private static final String PRODUCT_FOLDER = "goldentime/products";
     private static final ParameterizedTypeReference<Map<String, Object>> CLOUDINARY_RESPONSE =
             new ParameterizedTypeReference<>() {};
 
@@ -46,6 +47,14 @@ public class ArticleImageStorage {
     }
 
     public StoredImage save(MultipartFile file) {
+        return save(file, ARTICLE_FOLDER);
+    }
+
+    public StoredImage saveProductImage(MultipartFile file) {
+        return save(file, PRODUCT_FOLDER);
+    }
+
+    private StoredImage save(MultipartFile file, String folder) {
         if (file == null || file.isEmpty()) throw ApiException.badRequest("Chọn ảnh để tải lên.");
         if (file.getSize() > MAX_BYTES) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "Ảnh vượt quá 10 MB.");
         if (cloudName.isBlank() || apiKey.isBlank() || apiSecret.isBlank()) {
@@ -61,8 +70,8 @@ public class ArticleImageStorage {
             form.add("file", "data:" + contentType + ";base64," + Base64.getEncoder().encodeToString(bytes));
             form.add("api_key", apiKey);
             form.add("timestamp", Long.toString(timestamp));
-            form.add("folder", CLOUDINARY_FOLDER);
-            form.add("signature", sign(timestamp));
+            form.add("folder", folder);
+            form.add("signature", sign(timestamp, folder));
 
             Map<String, Object> response = restClient.post()
                     .uri("https://api.cloudinary.com/v1_1/{cloudName}/image/upload", cloudName)
@@ -80,19 +89,19 @@ public class ArticleImageStorage {
         } catch (IOException exception) {
             throw ApiException.badRequest("Không thể đọc tệp ảnh đã chọn.");
         } catch (RestClientResponseException exception) {
-            log.warn("Cloudinary rejected article image upload: {} {}", exception.getStatusCode(), exception.getResponseBodyAsString());
+            log.warn("Cloudinary rejected image upload: {} {}", exception.getStatusCode(), exception.getResponseBodyAsString());
             throw ApiException.unavailable("Cloudinary chưa nhận được ảnh. Kiểm tra CLOUDINARY_CLOUD_NAME, API key và API secret rồi thử lại.");
         } catch (RestClientException exception) {
-            log.warn("Could not reach Cloudinary for article image upload", exception);
+            log.warn("Could not reach Cloudinary for image upload", exception);
             throw ApiException.unavailable("Không kết nối được với Cloudinary. Thử lại sau ít phút.");
         } catch (RuntimeException exception) {
-            log.error("Unexpected article image upload failure", exception);
+            log.error("Unexpected image upload failure", exception);
             throw ApiException.unavailable("Không tải được ảnh lên Cloudinary. Thử lại hoặc dán URL HTTPS công khai.");
         }
     }
 
-    private String sign(long timestamp) {
-        String valueToSign = "folder=" + CLOUDINARY_FOLDER + "&timestamp=" + timestamp + apiSecret;
+    private String sign(long timestamp, String folder) {
+        String valueToSign = "folder=" + folder + "&timestamp=" + timestamp + apiSecret;
         try {
             byte[] digest = MessageDigest.getInstance("SHA-1").digest(valueToSign.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);

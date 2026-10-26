@@ -52,7 +52,7 @@ public class OrderController {
                 throw ApiException.badRequest("Sản phẩm " + product.name() + " không đủ tồn kho.");
             }
             if (shopId == -1) shopId = product.shopId();
-            else if (shopId != product.shopId()) throw ApiException.badRequest("Mỗi đơn demo chỉ được đặt sản phẩm từ một cửa hàng.");
+            else if (shopId != product.shopId()) throw ApiException.badRequest("Mỗi đơn chỉ được đặt sản phẩm từ một cửa hàng.");
             long lineTotal = BigDecimal.valueOf(product.pricePerKg()).multiply(item.quantityKg())
                     .setScale(0, RoundingMode.HALF_UP).longValueExact();
             subtotal = Math.addExact(subtotal, lineTotal);

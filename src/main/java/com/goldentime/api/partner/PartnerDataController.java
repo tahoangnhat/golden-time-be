@@ -1,20 +1,33 @@
 package com.goldentime.api.partner;
 
+import com.goldentime.api.articles.ArticleImageStorage;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
+import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -24,10 +37,23 @@ import java.util.List;
 @RequestMapping("/api/shop")
 @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
 public class PartnerDataController {
-    private final JdbcTemplate jdbc;
+    private static final String SHOP_PRODUCT_SELECT = """
+            SELECT p.id, f.id AS fruit_id, f.name AS fruit_name, f.emoji, f.category,
+                   p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code, p.image_url
+            FROM shop_products p JOIN fruits f ON f.id = p.fruit_id
+            """;
+    private static final RowMapper<ShopProduct> SHOP_PRODUCT_MAPPER = (rs, row) -> new ShopProduct(
+            rs.getLong("id"), rs.getLong("fruit_id"), rs.getString("fruit_name"), rs.getString("emoji"),
+            rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
+            rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
+            rs.getString("batch_code"), rs.getString("image_url"));
 
-    public PartnerDataController(JdbcTemplate jdbc) {
+    private final JdbcTemplate jdbc;
+    private final ArticleImageStorage imageStorage;
+
+    public PartnerDataController(JdbcTemplate jdbc, ArticleImageStorage imageStorage) {
         this.jdbc = jdbc;
+        this.imageStorage = imageStorage;
     }
 
     @GetMapping("/profile")
@@ -58,15 +84,77 @@ public class PartnerDataController {
     @GetMapping("/products")
     public List<ShopProduct> products(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
-        return jdbc.query("""
-                SELECT p.id, f.id AS fruit_id, f.name AS fruit_name, f.emoji, f.category,
-                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code
-                FROM shop_products p JOIN fruits f ON f.id = p.fruit_id
-                WHERE p.shop_id = ? ORDER BY p.created_at DESC, p.id DESC
-                """, (rs, row) -> new ShopProduct(rs.getLong("id"), rs.getLong("fruit_id"),
-                rs.getString("fruit_name"), rs.getString("emoji"), rs.getString("category"),
-                rs.getString("display_name"), rs.getLong("price_per_kg"), rs.getBigDecimal("stock_kg"),
-                (Integer) rs.getObject("ai_score"), rs.getString("status"), rs.getString("batch_code")), shopId);
+        return jdbc.query(SHOP_PRODUCT_SELECT + " WHERE p.shop_id = ? ORDER BY p.created_at DESC, p.id DESC",
+                SHOP_PRODUCT_MAPPER, shopId);
+    }
+
+    @PostMapping(value = "/products/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadProductImage(Authentication authentication,
+                                                                @RequestPart("file") MultipartFile file) {
+        shopId(CurrentUser.id(authentication));
+        return imageStorage.saveProductImage(file);
+    }
+
+    @PostMapping("/products")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ShopProduct createProduct(Authentication authentication, @Valid @RequestBody ShopProductWrite request) {
+        long shopId = shopId(CurrentUser.id(authentication));
+        validateFruit(request.fruitId());
+        String imageUrl = validateProductImageUrl(request.imageUrl());
+        long productId = jdbc.queryForObject("""
+                INSERT INTO shop_products (shop_id, fruit_id, display_name, price_per_kg, stock_kg, status, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """, Long.class, shopId, request.fruitId(), request.displayName().trim(), request.pricePerKg(),
+                request.stockKg(), productStatus(request.onSale(), request.stockKg()), imageUrl);
+        return shopProduct(shopId, productId);
+    }
+
+    @PutMapping("/products/{productId}")
+    public ShopProduct updateProduct(Authentication authentication, @PathVariable long productId,
+                                     @Valid @RequestBody ShopProductWrite request) {
+        long shopId = shopId(CurrentUser.id(authentication));
+        validateFruit(request.fruitId());
+        String imageUrl = validateProductImageUrl(request.imageUrl());
+        int updated = jdbc.update("""
+                UPDATE shop_products
+                SET fruit_id = ?, display_name = ?, price_per_kg = ?, stock_kg = ?, status = ?, image_url = ?
+                WHERE id = ? AND shop_id = ?
+                """, request.fruitId(), request.displayName().trim(), request.pricePerKg(), request.stockKg(),
+                productStatus(request.onSale(), request.stockKg()), imageUrl, productId, shopId);
+        if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
+        return shopProduct(shopId, productId);
+    }
+
+    private void validateFruit(long fruitId) {
+        Boolean exists = jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM fruits WHERE id = ?)", Boolean.class, fruitId);
+        if (!Boolean.TRUE.equals(exists)) throw ApiException.notFound("Không tìm thấy loại trái cây.");
+    }
+
+    private String validateProductImageUrl(String imageUrl) {
+        String value = imageUrl.trim();
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException exception) {
+            throw ApiException.badRequest("Địa chỉ ảnh sản phẩm không hợp lệ.");
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
+            throw ApiException.badRequest("Ảnh sản phẩm cần có địa chỉ HTTPS công khai.");
+        }
+        return value;
+    }
+
+    private ShopProduct shopProduct(long shopId, long productId) {
+        List<ShopProduct> products = jdbc.query(SHOP_PRODUCT_SELECT + " WHERE p.shop_id = ? AND p.id = ?",
+                SHOP_PRODUCT_MAPPER, shopId, productId);
+        if (products.isEmpty()) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
+        return products.get(0);
+    }
+
+    private static String productStatus(boolean onSale, BigDecimal stockKg) {
+        if (!onSale) return "HIDDEN";
+        return stockKg.signum() > 0 ? "ON_SALE" : "OUT_OF_STOCK";
     }
 
     @GetMapping("/orders")
@@ -181,9 +269,15 @@ public class PartnerDataController {
                               String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount) {}
     public record ShopLocationUpdate(@NotBlank @Size(max = 512) String address, @NotNull Double latitude,
                                     @NotNull Double longitude, @Size(max = 255) String googlePlaceId) {}
+    public record ShopProductWrite(@NotNull @Positive Long fruitId,
+                                   @NotBlank @Size(max = 255) String displayName,
+                                   @NotNull @Positive @Digits(integer = 12, fraction = 0) Long pricePerKg,
+                                   @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
+                                   @NotNull Boolean onSale,
+                                   @NotBlank @Size(max = 1024) String imageUrl) {}
     public record ShopProduct(long id, long fruitId, String fruitName, String emoji, String category,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
-                              String status, String batchCode) {}
+                              String status, String batchCode, String imageUrl) {}
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
     public record ShopOrder(long id, String customer, long total, long subtotal, long shippingFee, String status,
                             String payment, String deliveryName, String deliveryPhone, String deliveryAddress,

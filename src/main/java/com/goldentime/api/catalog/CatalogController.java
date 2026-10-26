@@ -84,7 +84,7 @@ public class CatalogController {
         if ((lat == null) != (lng == null)) throw ApiException.badRequest("Cần truyền đồng thời lat và lng.");
         StringBuilder sql = new StringBuilder("""
                 SELECT p.id, p.shop_id, s.name AS shop_name, s.latitude, s.longitude, f.id AS fruit_id,
-                       f.slug AS fruit_slug, f.name AS fruit_name, f.emoji, f.category,
+                       f.slug AS fruit_slug, f.name AS fruit_name, f.emoji, f.category, p.image_url,
                        p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.batch_code
                 FROM shop_products p
                 JOIN shops s ON s.id = p.shop_id
@@ -111,7 +111,8 @@ public class CatalogController {
             return new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
                     rs.getLong("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                     rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
-                    rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"), distance);
+                    rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
+                    distance, rs.getString("image_url"));
         }, args.toArray());
         if (lat == null) return products;
         return products.stream().filter(product -> product.distanceKm() <= Math.max(0, radiusKm)).toList();
@@ -138,5 +139,5 @@ public class CatalogController {
     public record ProductCard(long id, long shopId, String shopName, long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,
-                              Double distanceKm) {}
+                              Double distanceKm, String imageUrl) {}
 }
