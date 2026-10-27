@@ -122,6 +122,28 @@ public class CatalogController {
         return productsWithImages.stream().filter(product -> product.distanceKm() <= Math.max(0, radiusKm)).toList();
     }
 
+    @GetMapping("/api/products/{id}")
+    public ProductCard product(@PathVariable long id) {
+        List<ProductCard> matches = jdbc.query("""
+                SELECT p.id, p.shop_id, s.name AS shop_name, s.latitude, s.longitude, f.id AS fruit_id,
+                       f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
+                       COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
+                       (p.product_category = 'SEASONAL') AS is_seasonal,
+                       (p.product_category = 'PREPARED') AS is_prepared, p.image_url,
+                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.batch_code
+                FROM shop_products p
+                JOIN shops s ON s.id = p.shop_id
+                LEFT JOIN fruits f ON f.id = p.fruit_id
+                WHERE p.id = ? AND p.status = 'ON_SALE' AND s.status = 'ACTIVE'
+                """, (rs, row) -> new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
+                (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
+                rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
+                rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
+                null, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of()), id);
+        if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy sản phẩm hoặc sản phẩm đã ngừng bán.");
+        return withProductImages(matches.get(0));
+    }
+
     private ProductCard withProductImages(ProductCard product) {
         List<String> images = jdbc.query("SELECT image_url FROM shop_product_images WHERE shop_product_id = ? ORDER BY display_order, id",
                 (rs, row) -> rs.getString("image_url"), product.id());

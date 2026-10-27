@@ -110,7 +110,11 @@ public class AdminDataController {
         return jdbc.query("""
                 SELECT f.id, f.slug, f.name, f.emoji, f.category, n.calories_per_100g, n.vitamin_c_mg,
                        n.fiber_g, n.sugar_g, n.potassium_mg, n.water_percent, n.health_benefits
-                FROM fruits f LEFT JOIN fruit_nutrition n ON n.fruit_id = f.id ORDER BY f.name
+                FROM fruits f JOIN fruit_nutrition n ON n.fruit_id = f.id
+                WHERE n.calories_per_100g IS NOT NULL OR n.vitamin_c_mg IS NOT NULL
+                   OR n.fiber_g IS NOT NULL OR n.sugar_g IS NOT NULL OR n.potassium_mg IS NOT NULL
+                   OR n.water_percent IS NOT NULL OR NULLIF(BTRIM(n.health_benefits), '') IS NOT NULL
+                ORDER BY f.name
                 """, (rs, row) -> new NutritionRow(rs.getLong("id"), rs.getString("slug"), rs.getString("name"),
                 rs.getString("emoji"), rs.getString("category"), rs.getBigDecimal("calories_per_100g"), rs.getBigDecimal("vitamin_c_mg"),
                 rs.getBigDecimal("fiber_g"), rs.getBigDecimal("sugar_g"), rs.getBigDecimal("potassium_mg"),
