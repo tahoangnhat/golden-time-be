@@ -115,10 +115,18 @@ public class CatalogController {
                     (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                     rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                     rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
-                    distance, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"));
+                    distance, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of());
         }, args.toArray());
-        if (lat == null) return products;
-        return products.stream().filter(product -> product.distanceKm() <= Math.max(0, radiusKm)).toList();
+        List<ProductCard> productsWithImages = products.stream().map(this::withProductImages).toList();
+        if (lat == null) return productsWithImages;
+        return productsWithImages.stream().filter(product -> product.distanceKm() <= Math.max(0, radiusKm)).toList();
+    }
+
+    private ProductCard withProductImages(ProductCard product) {
+        List<String> images = jdbc.query("SELECT image_url FROM shop_product_images WHERE shop_product_id = ? ORDER BY display_order, id",
+                (rs, row) -> rs.getString("image_url"), product.id());
+        if (images.isEmpty() && product.imageUrl() != null && !product.imageUrl().isBlank()) images = List.of(product.imageUrl());
+        return product.withImageUrls(images);
     }
 
     private static double distanceKm(double lat1, double lng1, double lat2, double lng2) {
@@ -142,5 +150,11 @@ public class CatalogController {
     public record ProductCard(long id, long shopId, String shopName, Long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,
-                              Double distanceKm, String imageUrl, boolean seasonal, boolean prepared) {}
+                              Double distanceKm, String imageUrl, boolean seasonal, boolean prepared,
+                              List<String> imageUrls) {
+        ProductCard withImageUrls(List<String> images) {
+            return new ProductCard(id, shopId, shopName, fruitId, fruitSlug, fruitName, emoji, category,
+                    displayName, pricePerKg, stockKg, aiScore, batchCode, distanceKm, imageUrl, seasonal, prepared, images);
+        }
+    }
 }

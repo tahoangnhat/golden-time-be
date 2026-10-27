@@ -11,6 +11,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -30,22 +31,26 @@ public class TraceabilityManagementService {
         long shopId = shopId(userId);
         return jdbc.query("""
                 SELECT id, shop_id, name, address, manager_name, phone, fruit_types, area_hectares,
-                       certifications, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
+                       certifications, certification_image_url, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
                 FROM farms WHERE shop_id = ? ORDER BY created_at DESC, id DESC
-                """, TraceabilityManagementService::mapFarm, shopId);
+                """, TraceabilityManagementService::mapFarm, shopId).stream().map(this::withFarmImages).toList();
     }
 
     @Transactional
     public Farm createFarm(long userId, FarmWrite request) {
         long shopId = shopId(userId);
-        String imageUrl = validateImageUrl(request.imageUrl());
+        List<String> imageUrls = validateImageUrls(request.imageUrls(), request.imageUrl());
+        if (imageUrls.isEmpty()) throw ApiException.badRequest("Hãy tải lên ít nhất một ảnh nông trại.");
+        String certificationImageUrl = validateRequiredImageUrl(request.certificationImageUrl(), "ảnh giấy chứng nhận");
+        String imageUrl = imageUrls.get(0);
         Long id = jdbc.queryForObject("""
                 INSERT INTO farms (shop_id, name, address, manager_name, phone, fruit_types,
-                                   area_hectares, certifications, image_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                                   area_hectares, certifications, certification_image_url, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, shopId, request.name().trim(), request.address().trim(),
                 request.managerName().trim(), request.phone().trim(), request.fruitTypes().trim(),
-                request.areaHectares(), optionalText(request.certifications()), imageUrl);
+                request.areaHectares(), optionalText(request.certifications()), certificationImageUrl, imageUrl);
+        saveFarmImages(id, imageUrls);
         return farm(shopId, id);
     }
 
@@ -56,15 +61,19 @@ public class TraceabilityManagementService {
         if ("APPROVED".equals(current.status()) && hasBatches(farmId)) {
             throw new ApiException(HttpStatus.CONFLICT, "Nông trại đã có lô truy xuất nên không thể sửa thông tin. Hãy tạo nông trại mới nếu thông tin nguồn thay đổi.");
         }
-        String imageUrl = validateImageUrl(request.imageUrl());
+        List<String> imageUrls = validateImageUrls(request.imageUrls(), request.imageUrl());
+        if (imageUrls.isEmpty()) throw ApiException.badRequest("Hãy tải lên ít nhất một ảnh nông trại.");
+        String certificationImageUrl = validateRequiredImageUrl(request.certificationImageUrl(), "ảnh giấy chứng nhận");
+        String imageUrl = imageUrls.get(0);
         jdbc.update("""
                 UPDATE farms SET name = ?, address = ?, manager_name = ?, phone = ?, fruit_types = ?,
-                    area_hectares = ?, certifications = ?, image_url = ?, status = 'PENDING',
+                    area_hectares = ?, certifications = ?, certification_image_url = ?, image_url = ?, status = 'PENDING',
                     rejection_reason = NULL, reviewed_by = NULL, reviewed_at = NULL, updated_at = NOW()
                 WHERE id = ? AND shop_id = ?
                 """, request.name().trim(), request.address().trim(), request.managerName().trim(),
                 request.phone().trim(), request.fruitTypes().trim(), request.areaHectares(),
-                optionalText(request.certifications()), imageUrl, farmId, shopId);
+                optionalText(request.certifications()), certificationImageUrl, imageUrl, farmId, shopId);
+        saveFarmImages(farmId, imageUrls);
         return farm(shopId, farmId);
     }
 
@@ -147,21 +156,28 @@ public class TraceabilityManagementService {
     public List<Farm> adminFarms() {
         return jdbc.query("""
                 SELECT f.id, f.shop_id, f.name, f.address, f.manager_name, f.phone, f.fruit_types, f.area_hectares,
-                       f.certifications, f.image_url, f.status, f.rejection_reason, f.created_at, f.updated_at,
+                       f.certifications, f.certification_image_url, f.image_url, f.status, f.rejection_reason, f.created_at, f.updated_at,
                        f.reviewed_at, s.name AS shop_name
                 FROM farms f JOIN shops s ON s.id = f.shop_id
                 ORDER BY CASE WHEN f.status = 'PENDING' THEN 0 ELSE 1 END, f.created_at DESC, f.id DESC
                 """, (rs, row) -> new Farm(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("name"),
                 rs.getString("address"), rs.getString("manager_name"), rs.getString("phone"), rs.getString("fruit_types"),
-                rs.getBigDecimal("area_hectares"), rs.getString("certifications"), rs.getString("image_url"),
+                rs.getBigDecimal("area_hectares"), rs.getString("certifications"), rs.getString("certification_image_url"), rs.getString("image_url"),
                 rs.getString("status"), rs.getString("rejection_reason"), rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("updated_at").toInstant(), nullableInstant(rs.getTimestamp("reviewed_at")), rs.getString("shop_name")));
+                rs.getTimestamp("updated_at").toInstant(), nullableInstant(rs.getTimestamp("reviewed_at")), rs.getString("shop_name"), List.of()))
+                .stream().map(this::withFarmImages).toList();
     }
 
     @Transactional
     public Farm decideFarm(long farmId, boolean approved, String reason, long adminId) {
         Farm current = farmById(farmId);
         if (!"PENDING".equals(current.status())) throw new ApiException(HttpStatus.CONFLICT, "Nông trại này đã được xử lý.");
+        if (approved && (current.certificationImageUrl() == null || current.certificationImageUrl().isBlank())) {
+            throw ApiException.badRequest("Nông trại cần có ảnh giấy chứng nhận trước khi được xác minh.");
+        }
+        if (approved && current.imageUrls().isEmpty()) {
+            throw ApiException.badRequest("Nông trại cần có ít nhất một ảnh nông trại trước khi được xác minh.");
+        }
         String normalizedReason = reason == null ? "" : reason.trim();
         if (!approved && normalizedReason.isBlank()) throw ApiException.badRequest("Hãy ghi lý do từ chối.");
         int updated = jdbc.update("""
@@ -223,11 +239,15 @@ public class TraceabilityManagementService {
     private Farm approvedFarm(long shopId, long farmId) {
         List<Farm> matches = jdbc.query("""
                 SELECT id, shop_id, name, address, manager_name, phone, fruit_types, area_hectares,
-                       certifications, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
+                       certifications, certification_image_url, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
                 FROM farms WHERE id = ? AND shop_id = ? AND status = 'APPROVED' FOR UPDATE
                 """, TraceabilityManagementService::mapFarm, farmId, shopId);
         if (matches.isEmpty()) throw ApiException.badRequest("Chỉ có thể chọn nông trại đã được Admin xác minh thuộc doanh nghiệp của bạn.");
-        return matches.get(0);
+        Farm farm = withFarmImages(matches.get(0));
+        if (farm.certificationImageUrl() == null || farm.certificationImageUrl().isBlank() || farm.imageUrls().isEmpty()) {
+            throw ApiException.badRequest("Nông trại cần có ảnh giấy chứng nhận và ít nhất một ảnh nông trại để tạo lô hàng.");
+        }
+        return farm;
     }
 
     private Product product(long shopId, long productId) {
@@ -243,21 +263,21 @@ public class TraceabilityManagementService {
     private Farm farm(long shopId, long farmId) {
         List<Farm> matches = jdbc.query("""
                 SELECT id, shop_id, name, address, manager_name, phone, fruit_types, area_hectares,
-                       certifications, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
+                       certifications, certification_image_url, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
                 FROM farms WHERE id = ? AND shop_id = ? FOR UPDATE
                 """, TraceabilityManagementService::mapFarm, farmId, shopId);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy nông trại của doanh nghiệp.");
-        return matches.get(0);
+        return withFarmImages(matches.get(0));
     }
 
     private Farm farmById(long farmId) {
         List<Farm> matches = jdbc.query("""
                 SELECT id, shop_id, name, address, manager_name, phone, fruit_types, area_hectares,
-                       certifications, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
+                       certifications, certification_image_url, image_url, status, rejection_reason, created_at, updated_at, reviewed_at
                 FROM farms WHERE id = ?
                 """, TraceabilityManagementService::mapFarm, farmId);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy nông trại.");
-        return matches.get(0);
+        return withFarmImages(matches.get(0));
     }
 
     private BatchSummary batch(long shopId, String code) {
@@ -300,9 +320,9 @@ public class TraceabilityManagementService {
     private static Farm mapFarm(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
         return new Farm(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("name"), rs.getString("address"),
                 rs.getString("manager_name"), rs.getString("phone"), rs.getString("fruit_types"),
-                rs.getBigDecimal("area_hectares"), rs.getString("certifications"), rs.getString("image_url"),
+                rs.getBigDecimal("area_hectares"), rs.getString("certifications"), rs.getString("certification_image_url"), rs.getString("image_url"),
                 rs.getString("status"), rs.getString("rejection_reason"), rs.getTimestamp("created_at").toInstant(),
-                rs.getTimestamp("updated_at").toInstant(), nullableInstant(rs.getTimestamp("reviewed_at")), null);
+                rs.getTimestamp("updated_at").toInstant(), nullableInstant(rs.getTimestamp("reviewed_at")), null, List.of());
     }
 
     private static BatchSummary mapBatch(java.sql.ResultSet rs, int row) throws java.sql.SQLException {
@@ -344,6 +364,41 @@ public class TraceabilityManagementService {
         }
     }
 
+    private static String validateRequiredImageUrl(String value, String label) {
+        String validated = validateImageUrl(value);
+        if (validated == null) throw ApiException.badRequest("Hãy tải lên " + label + ".");
+        return validated;
+    }
+
+    private static List<String> validateImageUrls(List<String> values, String legacyImageUrl) {
+        List<String> requested = values;
+        if (requested == null) {
+            requested = legacyImageUrl == null || legacyImageUrl.isBlank() ? List.of() : List.of(legacyImageUrl);
+        }
+        List<String> validated = new ArrayList<>();
+        for (String value : requested) {
+            if (value == null || value.isBlank()) continue;
+            String imageUrl = validateImageUrl(value);
+            if (!validated.contains(imageUrl)) validated.add(imageUrl);
+        }
+        return List.copyOf(validated);
+    }
+
+    private void saveFarmImages(long farmId, List<String> imageUrls) {
+        jdbc.update("DELETE FROM farm_images WHERE farm_id = ?", farmId);
+        for (int i = 0; i < imageUrls.size(); i++) {
+            jdbc.update("INSERT INTO farm_images (farm_id, image_url, display_order) VALUES (?, ?, ?)",
+                    farmId, imageUrls.get(i), i);
+        }
+    }
+
+    private Farm withFarmImages(Farm farm) {
+        List<String> images = jdbc.query("SELECT image_url FROM farm_images WHERE farm_id = ? ORDER BY display_order, id",
+                (rs, row) -> rs.getString("image_url"), farm.id());
+        if (images.isEmpty() && farm.imageUrl() != null && !farm.imageUrl().isBlank()) images = List.of(farm.imageUrl());
+        return farm.withImageUrls(images);
+    }
+
     private static String optionalText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
@@ -357,12 +412,19 @@ public class TraceabilityManagementService {
     }
 
     public record Farm(long id, long shopId, String name, String address, String managerName, String phone,
-                       String fruitTypes, BigDecimal areaHectares, String certifications, String imageUrl,
+                       String fruitTypes, BigDecimal areaHectares, String certifications,
+                       String certificationImageUrl, String imageUrl,
                        String status, String rejectionReason, Instant createdAt, Instant updatedAt,
-                       Instant reviewedAt, String shopName) {}
+                       Instant reviewedAt, String shopName, List<String> imageUrls) {
+        Farm withImageUrls(List<String> images) {
+            return new Farm(id, shopId, name, address, managerName, phone, fruitTypes, areaHectares,
+                    certifications, certificationImageUrl, imageUrl, status, rejectionReason, createdAt, updatedAt, reviewedAt, shopName, images);
+        }
+    }
 
     public record FarmWrite(String name, String address, String managerName, String phone, String fruitTypes,
-                            BigDecimal areaHectares, String certifications, String imageUrl) {}
+                            BigDecimal areaHectares, String certifications, String certificationImageUrl,
+                            String imageUrl, List<String> imageUrls) {}
 
     public record BatchWrite(long productId, long farmId, BigDecimal quantityKg, LocalDate harvestDate,
                              LocalDate packagingDate, LocalDate qualityCheckedAt, String qualityResult,

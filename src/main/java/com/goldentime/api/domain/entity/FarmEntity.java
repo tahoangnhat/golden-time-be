@@ -35,6 +35,9 @@ public class FarmEntity {
     @Column(columnDefinition = "TEXT")
     private String certifications;
 
+    @Column(name = "certification_image_url", length = 1024)
+    private String certificationImageUrl;
+
     @Column(name = "image_url")
     private String imageUrl;
 
@@ -74,6 +77,8 @@ public class FarmEntity {
     public void setAreaHectares(BigDecimal areaHectares) { this.areaHectares = areaHectares; }
     public String getCertifications() { return certifications; }
     public void setCertifications(String certifications) { this.certifications = certifications; }
+    public String getCertificationImageUrl() { return certificationImageUrl; }
+    public void setCertificationImageUrl(String certificationImageUrl) { this.certificationImageUrl = certificationImageUrl; }
     public String getImageUrl() { return imageUrl; }
     public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
     public String getStatus() { return status; }

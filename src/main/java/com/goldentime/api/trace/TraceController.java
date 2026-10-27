@@ -27,6 +27,7 @@ public class TraceController {
                        b.quality_score, b.quality_note, b.transport_date, b.transport_info, b.batch_status,
                        farm.id AS farm_id, farm.name AS farm_name, farm.address AS farm_address,
                        farm.manager_name, farm.fruit_types, farm.certifications AS farm_certifications,
+                       farm.certification_image_url AS farm_certification_image_url,
                        farm.image_url AS farm_image_url, shop.id AS shop_id, shop.name AS shop_name,
                        shop.address AS shop_address, shop.logo_url AS shop_logo_url
                 FROM trace_batches b LEFT JOIN fruits f ON f.id = b.fruit_id
@@ -44,11 +45,16 @@ public class TraceController {
                 rs.getObject("transport_date", LocalDate.class), rs.getString("transport_info"), rs.getString("batch_status"),
                 nullableLong(rs, "farm_id") == null ? null : new FarmInfo(nullableLong(rs, "farm_id"), rs.getString("farm_name"),
                         rs.getString("farm_address"), rs.getString("manager_name"), rs.getString("fruit_types"),
-                        rs.getString("farm_certifications"), rs.getString("farm_image_url")),
+                        rs.getString("farm_certifications"), rs.getString("farm_certification_image_url"),
+                        rs.getString("farm_image_url"), List.of()),
                 nullableLong(rs, "shop_id") == null ? null : new BusinessInfo(nullableLong(rs, "shop_id"), rs.getString("shop_name"),
                         rs.getString("shop_address"), rs.getString("shop_logo_url"))), batchCode.trim());
         if (batches.isEmpty()) throw ApiException.notFound("Không tìm thấy mã lô truy xuất.");
         Batch batch = batches.get(0);
+        if (batch.farm() != null) {
+            FarmInfo farm = batch.farm();
+            batch = batch.withFarm(farm.withImageUrls(farmImageUrls(farm.id(), farm.imageUrl())));
+        }
         List<TraceEvent> events = jdbc.query("""
                 SELECT step_order, title, event_date, location, icon_key, completed
                 FROM trace_events WHERE batch_code = ? ORDER BY step_order
@@ -64,10 +70,23 @@ public class TraceController {
                         String publicNote, String fruitName, String emoji, java.math.BigDecimal quantityKg,
                         LocalDate packagingDate, LocalDate qualityCheckedAt, String qualityResult,
                         Integer qualityScore, String qualityNote, LocalDate transportDate, String transportInfo,
-                        String batchStatus, FarmInfo farm, BusinessInfo business) {}
+                        String batchStatus, FarmInfo farm, BusinessInfo business) {
+        Batch withFarm(FarmInfo farmInfo) {
+            return new Batch(batchCode, productName, origin, supplier, certified, harvestDate, intakeDate,
+                    certificates, storageTemperature, storageHumidity, publicNote, fruitName, emoji, quantityKg,
+                    packagingDate, qualityCheckedAt, qualityResult, qualityScore, qualityNote, transportDate,
+                    transportInfo, batchStatus, farmInfo, business);
+        }
+    }
 
     public record FarmInfo(long id, String name, String address, String managerName,
-                           String fruitTypes, String certifications, String imageUrl) {}
+                           String fruitTypes, String certifications, String certificationImageUrl,
+                           String imageUrl, List<String> imageUrls) {
+        FarmInfo withImageUrls(List<String> images) {
+            return new FarmInfo(id, name, address, managerName, fruitTypes, certifications,
+                    certificationImageUrl, imageUrl, images);
+        }
+    }
 
     public record BusinessInfo(long id, String name, String address, String logoUrl) {}
 
@@ -78,5 +97,11 @@ public class TraceController {
 
     private static Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         return (Long) rs.getObject(column);
+    }
+
+    private List<String> farmImageUrls(long farmId, String coverImage) {
+        List<String> images = jdbc.query("SELECT image_url FROM farm_images WHERE farm_id = ? ORDER BY display_order, id",
+                (rs, row) -> rs.getString("image_url"), farmId);
+        return images.isEmpty() && coverImage != null && !coverImage.isBlank() ? List.of(coverImage) : images;
     }
 }

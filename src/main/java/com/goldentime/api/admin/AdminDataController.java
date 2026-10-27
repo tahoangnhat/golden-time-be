@@ -108,11 +108,11 @@ public class AdminDataController {
     @GetMapping("/nutrition")
     public List<NutritionRow> nutrition() {
         return jdbc.query("""
-                SELECT f.id, f.slug, f.name, f.emoji, n.calories_per_100g, n.vitamin_c_mg,
+                SELECT f.id, f.slug, f.name, f.emoji, f.category, n.calories_per_100g, n.vitamin_c_mg,
                        n.fiber_g, n.sugar_g, n.potassium_mg, n.water_percent, n.health_benefits
                 FROM fruits f LEFT JOIN fruit_nutrition n ON n.fruit_id = f.id ORDER BY f.name
                 """, (rs, row) -> new NutritionRow(rs.getLong("id"), rs.getString("slug"), rs.getString("name"),
-                rs.getString("emoji"), rs.getBigDecimal("calories_per_100g"), rs.getBigDecimal("vitamin_c_mg"),
+                rs.getString("emoji"), rs.getString("category"), rs.getBigDecimal("calories_per_100g"), rs.getBigDecimal("vitamin_c_mg"),
                 rs.getBigDecimal("fiber_g"), rs.getBigDecimal("sugar_g"), rs.getBigDecimal("potassium_mg"),
                 rs.getBigDecimal("water_percent"), rs.getString("health_benefits")));
     }
@@ -200,7 +200,7 @@ public class AdminDataController {
                             boolean purchased) {}
     public record ScanRow(long id, String fruit, String emoji, Integer freshness, Integer quality, Double confidence,
                           String user, String mode, Instant createdAt) {}
-    public record NutritionRow(long id, String slug, String name, String emoji, BigDecimal calories, BigDecimal vitaminC,
+    public record NutritionRow(long id, String slug, String name, String emoji, String category, BigDecimal calories, BigDecimal vitaminC,
                                BigDecimal fiber, BigDecimal sugar, BigDecimal potassium, BigDecimal water, String benefits) {}
     public record TraceRow(String batchCode, String product, String shop, String supplier, String area,
                            LocalDate harvestDate, LocalDate intakeDate, String certificates, boolean certified,

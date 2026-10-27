@@ -72,6 +72,13 @@ public class ShopTraceabilityController {
         return imageStorage.saveFarmImage(file);
     }
 
+    @PostMapping(value = "/farms/certifications", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadFarmCertification(Authentication authentication,
+            @RequestPart("file") MultipartFile file) {
+        traceability.farms(CurrentUser.id(authentication));
+        return imageStorage.saveFarmImage(file);
+    }
+
     @GetMapping("/batches")
     public List<TraceabilityManagementService.BatchSummary> batches(Authentication authentication) {
         return traceability.batches(CurrentUser.id(authentication));
@@ -97,10 +104,12 @@ public class ShopTraceabilityController {
                             @NotBlank @Size(max = 2000) String fruitTypes,
                             @DecimalMin("0.01") @Digits(integer = 8, fraction = 2) BigDecimal areaHectares,
                             @Size(max = 2000) String certifications,
-                            @Size(max = 1024) String imageUrl) {
+                            @NotBlank @Size(max = 1024) String certificationImageUrl,
+                            @Size(max = 1024) String imageUrl,
+                            @Size(max = 10) List<@Size(max = 1024) String> imageUrls) {
         TraceabilityManagementService.FarmWrite toServiceRequest() {
             return new TraceabilityManagementService.FarmWrite(name, address, managerName, phone, fruitTypes,
-                    areaHectares, certifications, imageUrl);
+                    areaHectares, certifications, certificationImageUrl, imageUrl, imageUrls);
         }
     }
 

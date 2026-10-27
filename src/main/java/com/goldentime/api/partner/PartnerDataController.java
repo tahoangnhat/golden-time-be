@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -51,7 +52,7 @@ public class PartnerDataController {
             rs.getString("product_category"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"),
             rs.getString("display_name"), rs.getLong("price_per_kg"),
             rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
-            rs.getString("batch_code"), rs.getString("image_url"));
+            rs.getString("batch_code"), rs.getString("image_url"), List.of());
 
     private final JdbcTemplate jdbc;
     private final ArticleImageStorage imageStorage;
@@ -110,7 +111,7 @@ public class PartnerDataController {
     public List<ShopProduct> products(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
         return jdbc.query(SHOP_PRODUCT_SELECT + " WHERE p.shop_id = ? ORDER BY p.created_at DESC, p.id DESC",
-                SHOP_PRODUCT_MAPPER, shopId);
+                SHOP_PRODUCT_MAPPER, shopId).stream().map(this::withProductImages).toList();
     }
 
     @PostMapping(value = "/products/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -122,11 +123,13 @@ public class PartnerDataController {
 
     @PostMapping("/products")
     @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
     public ShopProduct createProduct(Authentication authentication, @Valid @RequestBody ShopProductWrite request) {
         long shopId = shopId(CurrentUser.id(authentication));
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
-        String imageUrl = validateProductImageUrl(request.imageUrl());
+        List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
+        String imageUrl = imageUrls.get(0);
         long productId = jdbc.queryForObject("""
                 INSERT INTO shop_products (shop_id, fruit_id, product_category, is_seasonal, is_prepared, display_name, price_per_kg, stock_kg, status, image_url)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -134,16 +137,19 @@ public class PartnerDataController {
                 """, Long.class, shopId, request.fruitId(), request.category(),
                 "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()), request.displayName().trim(), request.pricePerKg(),
                 request.stockKg(), productStatus(request.onSale(), request.stockKg()), imageUrl);
+        saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
     }
 
     @PutMapping("/products/{productId}")
+    @Transactional
     public ShopProduct updateProduct(Authentication authentication, @PathVariable long productId,
                                      @Valid @RequestBody ShopProductWrite request) {
         long shopId = shopId(CurrentUser.id(authentication));
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
-        String imageUrl = validateProductImageUrl(request.imageUrl());
+        List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
+        String imageUrl = imageUrls.get(0);
         int updated = jdbc.update("""
                 UPDATE shop_products
                 SET fruit_id = ?, product_category = ?, is_seasonal = ?, is_prepared = ?, display_name = ?, price_per_kg = ?, stock_kg = ?, status = ?, image_url = ?
@@ -152,6 +158,7 @@ public class PartnerDataController {
                 request.displayName().trim(), request.pricePerKg(), request.stockKg(),
                 productStatus(request.onSale(), request.stockKg()), imageUrl, productId, shopId);
         if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
+        saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
     }
 
@@ -180,9 +187,33 @@ public class PartnerDataController {
         return value;
     }
 
+    private List<String> validateProductImageUrls(List<String> imageUrls, String legacyImageUrl) {
+        List<String> requested = imageUrls;
+        if (requested == null) requested = legacyImageUrl == null || legacyImageUrl.isBlank() ? List.of() : List.of(legacyImageUrl);
+        List<String> validated = requested.stream().filter(value -> value != null && !value.isBlank())
+                .map(this::validateProductImageUrl).distinct().toList();
+        if (validated.isEmpty()) throw ApiException.badRequest("Hãy tải lên ít nhất một ảnh sản phẩm.");
+        return validated;
+    }
+
+    private void saveProductImages(long productId, List<String> imageUrls) {
+        jdbc.update("DELETE FROM shop_product_images WHERE shop_product_id = ?", productId);
+        for (int i = 0; i < imageUrls.size(); i++) {
+            jdbc.update("INSERT INTO shop_product_images (shop_product_id, image_url, display_order) VALUES (?, ?, ?)",
+                    productId, imageUrls.get(i), i);
+        }
+    }
+
+    private ShopProduct withProductImages(ShopProduct product) {
+        List<String> images = jdbc.query("SELECT image_url FROM shop_product_images WHERE shop_product_id = ? ORDER BY display_order, id",
+                (rs, row) -> rs.getString("image_url"), product.id());
+        if (images.isEmpty() && product.imageUrl() != null && !product.imageUrl().isBlank()) images = List.of(product.imageUrl());
+        return product.withImageUrls(images);
+    }
+
     private ShopProduct shopProduct(long shopId, long productId) {
         List<ShopProduct> products = jdbc.query(SHOP_PRODUCT_SELECT + " WHERE p.shop_id = ? AND p.id = ?",
-                SHOP_PRODUCT_MAPPER, shopId, productId);
+                SHOP_PRODUCT_MAPPER, shopId, productId).stream().map(this::withProductImages).toList();
         if (products.isEmpty()) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         return products.get(0);
     }
@@ -319,11 +350,17 @@ public class PartnerDataController {
                                    @NotNull @Positive @Digits(integer = 12, fraction = 0) Long pricePerKg,
                                    @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
                                    @NotNull Boolean onSale,
-                                   @NotBlank @Size(max = 1024) String imageUrl) {}
+                                   @Size(max = 1024) String imageUrl,
+                                   @Size(max = 10) List<@Size(max = 1024) String> imageUrls) {}
     public record ShopProduct(long id, Long fruitId, String fruitName, String emoji, String category,
                               boolean seasonal, boolean prepared,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
-                              String status, String batchCode, String imageUrl) {}
+                              String status, String batchCode, String imageUrl, List<String> imageUrls) {
+        ShopProduct withImageUrls(List<String> images) {
+            return new ShopProduct(id, fruitId, fruitName, emoji, category, seasonal, prepared, displayName,
+                    pricePerKg, stockKg, aiScore, status, batchCode, imageUrl, images);
+        }
+    }
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
     public record ShopOrder(long id, String customer, long total, long subtotal, long shippingFee, String status,
                             String payment, String deliveryName, String deliveryPhone, String deliveryAddress,
