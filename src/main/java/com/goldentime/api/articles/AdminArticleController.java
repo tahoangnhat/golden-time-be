@@ -25,6 +25,7 @@ import java.sql.SQLException;
 import java.text.Normalizer;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -36,6 +37,7 @@ public class AdminArticleController {
     private static final String FIELDS = "id, slug, title, category, emoji, gradient, description, body, author, " +
             "published_at, reading_time, published, cover_url, cover_alt, seo_title, seo_description, featured, created_at, updated_at";
     private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+    private static final ZoneId BUSINESS_TIME_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final JdbcTemplate jdbc;
     private final ArticleContentSanitizer sanitizer;
@@ -137,8 +139,9 @@ public class AdminArticleController {
         String coverUrl = normalizeImageUrl(request.coverUrl());
         LocalDate publishedAt = parseDate(request.publishedAt());
         boolean published = request.published();
-        if (published && publishedAt == null) publishedAt = LocalDate.now();
-        if (published && publishedAt.isAfter(LocalDate.now())) {
+        LocalDate today = LocalDate.now(BUSINESS_TIME_ZONE);
+        if (published && publishedAt == null) publishedAt = today;
+        if (published && publishedAt.isAfter(today)) {
             throw ApiException.badRequest("Ngày xuất bản không thể ở tương lai; chức năng lên lịch đăng chưa được bật.");
         }
         String readingTime = Math.max(1, (int) Math.ceil(Jsoup.parse(body).text().trim().split("\\s+").length / 200.0)) + " phút đọc";
