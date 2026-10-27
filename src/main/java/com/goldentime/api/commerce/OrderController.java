@@ -115,11 +115,11 @@ public class OrderController {
         if (headers.isEmpty()) throw ApiException.notFound("Không tìm thấy đơn hàng.");
         OrderHeader header = headers.get(0);
         List<OrderItem> items = jdbc.query("""
-                SELECT oi.shop_product_id, p.display_name, f.emoji, oi.quantity_kg,
+                SELECT oi.shop_product_id, p.display_name, COALESCE(f.emoji, '🍎') AS emoji, oi.quantity_kg,
                        oi.unit_price, oi.line_total
                 FROM order_items oi
                 JOIN shop_products p ON p.id = oi.shop_product_id
-                JOIN fruits f ON f.id = p.fruit_id
+                LEFT JOIN fruits f ON f.id = p.fruit_id
                 WHERE oi.order_id = ? ORDER BY oi.id
                 """, (rs, row) -> new OrderItem(rs.getLong("shop_product_id"), rs.getString("display_name"),
                 rs.getString("emoji"), rs.getBigDecimal("quantity_kg"), rs.getLong("unit_price"), rs.getLong("line_total")), orderId);

@@ -53,9 +53,9 @@ public class AdminDataController {
     @GetMapping("/products")
     public List<ProductRow> products() {
         return jdbc.query("""
-                SELECT p.id, f.emoji, p.display_name, s.name AS shop_name, p.price_per_kg, p.stock_kg,
-                       p.ai_score, p.status, f.category
-                FROM shop_products p JOIN shops s ON s.id = p.shop_id JOIN fruits f ON f.id = p.fruit_id
+                SELECT p.id, COALESCE(f.emoji, '🍎') AS emoji, p.display_name, s.name AS shop_name, p.price_per_kg, p.stock_kg,
+                       p.ai_score, p.status, p.product_category AS category
+                FROM shop_products p JOIN shops s ON s.id = p.shop_id LEFT JOIN fruits f ON f.id = p.fruit_id
                 ORDER BY p.created_at DESC, p.id DESC
                 """, (rs, row) -> new ProductRow(rs.getLong("id"), rs.getString("emoji"),
                 rs.getString("display_name"), rs.getString("shop_name"), rs.getLong("price_per_kg"),

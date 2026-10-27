@@ -84,11 +84,14 @@ public class CatalogController {
         if ((lat == null) != (lng == null)) throw ApiException.badRequest("Cần truyền đồng thời lat và lng.");
         StringBuilder sql = new StringBuilder("""
                 SELECT p.id, p.shop_id, s.name AS shop_name, s.latitude, s.longitude, f.id AS fruit_id,
-                       f.slug AS fruit_slug, f.name AS fruit_name, f.emoji, f.category, p.is_seasonal, p.is_prepared, p.image_url,
+                       f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
+                       COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
+                       (p.product_category = 'SEASONAL') AS is_seasonal,
+                       (p.product_category = 'PREPARED') AS is_prepared, p.image_url,
                        p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.batch_code
                 FROM shop_products p
                 JOIN shops s ON s.id = p.shop_id
-                JOIN fruits f ON f.id = p.fruit_id
+                LEFT JOIN fruits f ON f.id = p.fruit_id
                 WHERE p.status = 'ON_SALE' AND p.stock_kg > 0 AND s.status = 'ACTIVE'
                 """);
         List<Object> args = new ArrayList<>();
@@ -97,7 +100,7 @@ public class CatalogController {
             args.add(fruitSlug.trim());
         }
         if (q != null && !q.isBlank()) {
-            sql.append(" AND (LOWER(p.display_name) LIKE ? OR LOWER(f.name) LIKE ? OR LOWER(COALESCE(f.search_keywords, '')) LIKE ?)");
+            sql.append(" AND (LOWER(p.display_name) LIKE ? OR LOWER(COALESCE(f.name, '')) LIKE ? OR LOWER(COALESCE(f.search_keywords, '')) LIKE ?)");
             String pattern = "%" + q.trim().toLowerCase() + "%";
             args.add(pattern);
             args.add(pattern);
@@ -109,7 +112,7 @@ public class CatalogController {
             double shopLng = rs.getDouble("longitude");
             Double distance = lat == null ? null : distanceKm(lat, lng, shopLat, shopLng);
             return new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
-                    rs.getLong("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
+                    (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                     rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                     rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
                     distance, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"));
@@ -136,7 +139,7 @@ public class CatalogController {
     public record ShopSummary(long id, String name, String address, double latitude, double longitude,
                               BigDecimal rating, int reviewCount, String description, String popularFruit,
                               int productCount, Double distanceKm) {}
-    public record ProductCard(long id, long shopId, String shopName, long fruitId, String fruitSlug,
+    public record ProductCard(long id, long shopId, String shopName, Long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,
                               Double distanceKm, String imageUrl, boolean seasonal, boolean prepared) {}
