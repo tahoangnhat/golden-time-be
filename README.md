@@ -53,7 +53,10 @@ Hồ sơ đối tác lưu địa chỉ và tọa độ đã chọn. Admin kiểm
 - `GET /api/articles`, `GET /api/articles/{slug}`; quản lý nội dung bằng giao diện Admin > Bài viết hoặc API `/api/admin/articles` (chỉ ADMIN).
 - `/api/admin/users`, `/api/admin/shops`, `/api/admin/products`, `/api/admin/orders`, `/api/admin/reviews`, `/api/admin/scans`, `/api/admin/nutrition`, `/api/admin/traceability`, `/api/admin/overview`
 - `POST /api/business/applications` nhận thông tin doanh nghiệp và giấy phép kinh doanh dạng multipart; Admin xem/duyệt tại `/api/admin/business-applications` và tải giấy phép qua `/api/admin/business-applications/{id}/license`.
-- Cửa hàng có thể đọc `/api/shop/profile`, `/api/shop/products`, `/api/shop/orders`, `/api/shop/reviews`, `/api/shop/traceability`, `/api/shop/overview`; tài khoản phải có role `SHOP_OWNER` và liên kết với cửa hàng.
+- Hồ sơ Business nhận mã số thuế, logo, số điện thoại người đại diện và giấy phép tùy chọn. Admin duyệt/từ chối hồ sơ trước khi Shop và tài khoản `SHOP_OWNER` được tạo.
+- Business quản lý hồ sơ tại `/api/shop/profile`, Farm tại `/api/shop/farms`, ảnh Farm qua `/api/shop/farms/images`, Batch tại `/api/shop/batches`; các API khác gồm `/api/shop/products`, `/api/shop/orders`, `/api/shop/reviews`, `/api/shop/traceability`, `/api/shop/overview`. Tài khoản phải có role `SHOP_OWNER` và liên kết với cửa hàng.
+- Admin xác minh Farm tại `/api/admin/farms` và `/api/admin/farms/{id}/decision`; lịch sử Batch hiển thị tại `/api/admin/traceability`, có thể cập nhật trạng thái tại `/api/admin/traceability/{batchCode}/status`. Chỉ Farm `APPROVED` thuộc Shop hiện tại mới được gắn vào Batch.
+- Customer tra cứu mã tại `/api/trace/{batchCode}` hoặc mở `/trace?batchCode=...`; response có Product, Farm, Business, kiểm định, đóng gói, vận chuyển và timeline. Business hiển thị QR dẫn tới trang tra cứu theo mã lô.
 - `GET /api/updates`
 
 Login/register cấp access token 15 phút trong JSON và refresh token 14 ngày trong cookie `HttpOnly`; FE tự làm mới access token khi gặp 401 rồi thử lại request một lần. Logout thu hồi refresh token. Mỗi endpoint riêng tư yêu cầu JWT và backend lấy user id từ token, không nhận user id do FE tự truyền. API đọc danh mục/cửa hàng/bài viết công khai vẫn không cần đăng nhập. Mỗi đơn chỉ chứa sản phẩm từ một cửa hàng. Đánh giá cần kèm một `orderId` hoặc `scanId` của chính người dùng.
@@ -70,6 +73,8 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
 
 Ảnh bài viết tải lên tối đa 10 MB; backend kiểm tra chữ ký PNG/JPEG/WebP rồi chuyển ảnh lên Cloudinary bằng yêu cầu có chữ ký. Ảnh trả về dùng URL HTTPS công khai và không phụ thuộc ổ đĩa tạm của Render. Tạo tài khoản Cloudinary, lấy Cloud name, API Key và API Secret trong Dashboard, rồi thêm các biến `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` và `CLOUDINARY_API_SECRET` vào Environment của dịch vụ backend trên Render. Chỉ API Secret cần được giữ kín; không đưa các thông tin này vào FE, Git hoặc gửi qua chat. Có thể dùng URL ảnh HTTPS công khai thay cho tải ảnh lên. Các ảnh tải lên cục bộ trước đây vẫn cần được tải lại lên Cloudinary nếu đang dùng đường dẫn `/uploads/articles/...`.
+
+Logo Business và ảnh Farm dùng cùng cấu hình Cloudinary, nằm trong các thư mục riêng. Logo bắt buộc khi đăng ký doanh nghiệp; ảnh Farm tùy chọn. Business đăng ký và cập nhật Farm ở trạng thái `PENDING`; chỉnh sửa Farm sẽ gửi lại Admin xác minh. Batch được cấp mã `GT-<ngày>-<mã ngẫu nhiên>`; mã này là định danh QR duy nhất. Ảnh QR trên cổng Business được dựng từ URL tra cứu công khai bằng QR Server, vì vậy cần kết nối Internet để hiển thị ảnh QR.
 
 Admin có thể tạo bản nháp, sửa, xuất bản/gỡ bài, đánh dấu nổi bật, thêm ảnh bìa và ảnh nội dung, định dạng tiêu đề, danh sách, liên kết, cỡ/phông/màu chữ, cùng mô tả SEO. Nội dung rich text được làm sạch theo danh sách thẻ và thuộc tính cho phép trước khi lưu và trả về công khai.
 

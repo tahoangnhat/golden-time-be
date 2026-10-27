@@ -121,17 +121,26 @@ public class AdminDataController {
     public List<TraceRow> traceability() {
         return jdbc.query("""
                 SELECT b.batch_code, b.product_name, b.origin, b.supplier, b.certified,
-                       b.harvest_date, b.intake_date, b.certificates, s.name AS shop_name
+                       b.harvest_date, b.intake_date, b.certificates,
+                       COALESCE(s.name, legacy_shop.name) AS shop_name, f.name AS farm_name,
+                       b.quantity_kg, b.packaging_date, b.quality_checked_at, b.quality_result,
+                       b.quality_score, b.quality_note, b.transport_date, b.transport_info, b.batch_status
                 FROM trace_batches b
-                LEFT JOIN shop_products p ON p.batch_code = b.batch_code
-                LEFT JOIN shops s ON s.id = p.shop_id
-                GROUP BY b.batch_code, b.product_name, b.origin, b.supplier, b.certified,
-                         b.harvest_date, b.intake_date, b.certificates, s.name
+                LEFT JOIN shops s ON s.id = b.shop_id
+                LEFT JOIN farms f ON f.id = b.farm_id
+                LEFT JOIN LATERAL (SELECT sh.name FROM shop_products p JOIN shops sh ON sh.id = p.shop_id
+                                   WHERE p.batch_code = b.batch_code ORDER BY p.id LIMIT 1) legacy_shop ON TRUE
                 ORDER BY b.created_at DESC, b.batch_code
                 """, (rs, row) -> new TraceRow(rs.getString("batch_code"), rs.getString("product_name"),
-                rs.getString("shop_name"), rs.getString("supplier"), rs.getString("origin"), rs.getDate("harvest_date") == null ? null : rs.getDate("harvest_date").toLocalDate(),
+                rs.getString("shop_name"), rs.getString("supplier"), rs.getString("origin"),
+                rs.getDate("harvest_date") == null ? null : rs.getDate("harvest_date").toLocalDate(),
                 rs.getDate("intake_date") == null ? null : rs.getDate("intake_date").toLocalDate(),
-                rs.getString("certificates"), rs.getBoolean("certified")));
+                rs.getString("certificates"), rs.getBoolean("certified"), rs.getString("farm_name"),
+                rs.getBigDecimal("quantity_kg"), rs.getDate("packaging_date") == null ? null : rs.getDate("packaging_date").toLocalDate(),
+                rs.getDate("quality_checked_at") == null ? null : rs.getDate("quality_checked_at").toLocalDate(),
+                rs.getString("quality_result"), (Integer) rs.getObject("quality_score"), rs.getString("quality_note"),
+                rs.getDate("transport_date") == null ? null : rs.getDate("transport_date").toLocalDate(),
+                rs.getString("transport_info"), rs.getString("batch_status")));
     }
 
     @GetMapping("/overview")
@@ -194,7 +203,10 @@ public class AdminDataController {
     public record NutritionRow(long id, String slug, String name, String emoji, BigDecimal calories, BigDecimal vitaminC,
                                BigDecimal fiber, BigDecimal sugar, BigDecimal potassium, BigDecimal water, String benefits) {}
     public record TraceRow(String batchCode, String product, String shop, String supplier, String area,
-                           LocalDate harvestDate, LocalDate intakeDate, String certificates, boolean certified) {}
+                           LocalDate harvestDate, LocalDate intakeDate, String certificates, boolean certified,
+                           String farm, BigDecimal quantityKg, LocalDate packagingDate, LocalDate qualityCheckedAt,
+                           String qualityResult, Integer qualityScore, String qualityNote, LocalDate transportDate,
+                           String transportInfo, String batchStatus) {}
     public record TopFruit(String name, long scans) {}
     public record TopShop(String name, long orders, long orderValue) {}
     public record DailyMetric(LocalDate date, long orderValue, long scans) {}

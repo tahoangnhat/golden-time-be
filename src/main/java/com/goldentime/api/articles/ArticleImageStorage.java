@@ -30,6 +30,8 @@ public class ArticleImageStorage {
     private static final long MAX_BYTES = 10L * 1024 * 1024;
     private static final String ARTICLE_FOLDER = "goldentime/articles";
     private static final String PRODUCT_FOLDER = "goldentime/products";
+    private static final String BUSINESS_FOLDER = "goldentime/businesses";
+    private static final String FARM_FOLDER = "goldentime/farms";
     private static final ParameterizedTypeReference<Map<String, Object>> CLOUDINARY_RESPONSE =
             new ParameterizedTypeReference<>() {};
 
@@ -52,6 +54,14 @@ public class ArticleImageStorage {
 
     public StoredImage saveProductImage(MultipartFile file) {
         return save(file, PRODUCT_FOLDER);
+    }
+
+    public StoredImage saveBusinessLogo(MultipartFile file) {
+        return save(file, BUSINESS_FOLDER);
+    }
+
+    public StoredImage saveFarmImage(MultipartFile file) {
+        return save(file, FARM_FOLDER);
     }
 
     private StoredImage save(MultipartFile file, String folder) {

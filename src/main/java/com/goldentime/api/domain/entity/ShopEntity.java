@@ -18,6 +18,24 @@ public class ShopEntity {
 
     private String address;
 
+    @Column(name = "business_email")
+    private String businessEmail;
+
+    @Column(name = "business_phone")
+    private String businessPhone;
+
+    @Column(name = "tax_code", length = 64)
+    private String taxCode;
+
+    @Column(name = "representative_name")
+    private String representativeName;
+
+    @Column(name = "representative_phone", length = 32)
+    private String representativePhone;
+
+    @Column(name = "logo_url", length = 1024)
+    private String logoUrl;
+
     @Column(name = "google_place_id", length = 255)
     private String googlePlaceId;
 
@@ -72,6 +90,19 @@ public class ShopEntity {
     public void setAddress(String address) {
         this.address = address;
     }
+
+    public String getBusinessEmail() { return businessEmail; }
+    public void setBusinessEmail(String businessEmail) { this.businessEmail = businessEmail; }
+    public String getBusinessPhone() { return businessPhone; }
+    public void setBusinessPhone(String businessPhone) { this.businessPhone = businessPhone; }
+    public String getTaxCode() { return taxCode; }
+    public void setTaxCode(String taxCode) { this.taxCode = taxCode; }
+    public String getRepresentativeName() { return representativeName; }
+    public void setRepresentativeName(String representativeName) { this.representativeName = representativeName; }
+    public String getRepresentativePhone() { return representativePhone; }
+    public void setRepresentativePhone(String representativePhone) { this.representativePhone = representativePhone; }
+    public String getLogoUrl() { return logoUrl; }
+    public void setLogoUrl(String logoUrl) { this.logoUrl = logoUrl; }
 
     public String getGooglePlaceId() {
         return googlePlaceId;

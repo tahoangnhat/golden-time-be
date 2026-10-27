@@ -21,8 +21,10 @@ public class BusinessApplicationController {
     @ResponseStatus(HttpStatus.CREATED)
     public BusinessApplicationService.ApplicationReceipt submit(
             @RequestParam("businessName") String businessName,
-            @RequestParam("registrationNumber") String registrationNumber,
+            @RequestParam(value = "registrationNumber", required = false) String registrationNumber,
+            @RequestParam(value = "taxCode", required = false) String taxCode,
             @RequestParam("contactName") String contactName,
+            @RequestParam(value = "representativePhone", required = false) String representativePhone,
             @RequestParam("email") String email,
             @RequestParam("phone") String phone,
             @RequestParam("address") String address,
@@ -30,8 +32,11 @@ public class BusinessApplicationController {
             @RequestParam(value = "longitude", required = false) Double longitude,
             @RequestParam(value = "googlePlaceId", required = false) String googlePlaceId,
             @RequestParam("password") String password,
-            @RequestParam("licenseFile") MultipartFile licenseFile) {
-        return applications.submit(businessName, registrationNumber, contactName, email,
-                phone, address, latitude, longitude, googlePlaceId, password, licenseFile);
+            @RequestParam(value = "licenseFile", required = false) MultipartFile licenseFile,
+            @RequestParam(value = "logoFile", required = false) MultipartFile logoFile) {
+        String resolvedTaxCode = taxCode == null || taxCode.isBlank() ? registrationNumber : taxCode;
+        return applications.submit(businessName, resolvedTaxCode, contactName, email,
+                phone, address, latitude, longitude, googlePlaceId, password, representativePhone,
+                licenseFile, logoFile);
     }
 }

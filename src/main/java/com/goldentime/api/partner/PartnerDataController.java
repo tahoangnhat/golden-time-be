@@ -80,10 +80,30 @@ public class PartnerDataController {
         long userId = CurrentUser.id(authentication);
         long shopId = shopId(userId);
         jdbc.update("""
-                UPDATE shops SET address = ?, latitude = ?, longitude = ?, google_place_id = ?
+                UPDATE shops SET name = COALESCE(NULLIF(?, ''), name), address = ?, latitude = ?, longitude = ?,
+                    google_place_id = ?, business_email = CASE WHEN ? IS NULL THEN business_email ELSE NULLIF(?, '') END,
+                    business_phone = CASE WHEN ? IS NULL THEN business_phone ELSE NULLIF(?, '') END,
+                    tax_code = CASE WHEN ? IS NULL THEN tax_code ELSE NULLIF(?, '') END,
+                    representative_name = CASE WHEN ? IS NULL THEN representative_name ELSE NULLIF(?, '') END,
+                    representative_phone = CASE WHEN ? IS NULL THEN representative_phone ELSE NULLIF(?, '') END,
+                    logo_url = CASE WHEN ? IS NULL THEN logo_url ELSE NULLIF(?, '') END
                 WHERE id = ?
-                """, address, request.latitude(), request.longitude(), placeId, shopId);
+                """, request.name() == null ? null : request.name().trim(), address, request.latitude(), request.longitude(), placeId,
+                request.businessEmail(), request.businessEmail(), request.businessPhone(), request.businessPhone(),
+                request.taxCode(), request.taxCode(), request.representativeName(), request.representativeName(),
+                request.representativePhone(), request.representativePhone(), request.logoUrl(), request.logoUrl(), shopId);
+        if (request.businessPhone() != null) {
+            jdbc.update("UPDATE users SET phone = NULLIF(?, '') WHERE shop_id = ? AND role = 'SHOP_OWNER'",
+                    request.businessPhone().trim(), shopId);
+        }
         return shop(userId);
+    }
+
+    @PostMapping(value = "/profile/logo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadBusinessLogo(Authentication authentication,
+            @RequestPart("file") MultipartFile file) {
+        shopId(CurrentUser.id(authentication));
+        return imageStorage.saveBusinessLogo(file);
     }
 
     @GetMapping("/products")
@@ -258,13 +278,16 @@ public class PartnerDataController {
     private ShopProfile shop(long userId) {
         List<ShopProfile> shops = jdbc.query("""
                 SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.google_place_id, s.status,
-                       s.description, s.rating_avg, s.review_count
+                       s.description, s.rating_avg, s.review_count, s.business_email, s.business_phone,
+                       s.tax_code, s.representative_name, s.representative_phone, s.logo_url
                 FROM shops s LEFT JOIN users u ON u.id = ?
                 WHERE s.owner_user_id = ? OR s.id = u.shop_id
                 ORDER BY s.id LIMIT 1
                 """, (rs, row) -> new ShopProfile(rs.getLong("id"), rs.getString("name"), rs.getString("address"),
                 rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("google_place_id"), rs.getString("status"),
-                rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count")), userId, userId);
+                rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count"),
+                rs.getString("business_email"), rs.getString("business_phone"), rs.getString("tax_code"),
+                rs.getString("representative_name"), rs.getString("representative_phone"), rs.getString("logo_url")), userId, userId);
         if (shops.isEmpty()) throw ApiException.forbidden("Tài khoản chưa được liên kết với cửa hàng.");
         return shops.get(0);
     }
@@ -281,9 +304,15 @@ public class PartnerDataController {
     }
 
     public record ShopProfile(long id, String name, String address, double latitude, double longitude,
-                              String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount) {}
+                              String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount,
+                              String businessEmail, String businessPhone, String taxCode,
+                              String representativeName, String representativePhone, String logoUrl) {}
     public record ShopLocationUpdate(@NotBlank @Size(max = 512) String address, @NotNull Double latitude,
-                                    @NotNull Double longitude, @Size(max = 255) String googlePlaceId) {}
+                                    @NotNull Double longitude, @Size(max = 255) String googlePlaceId,
+                                    @Size(min = 2, max = 255) String name,
+                                    @Size(max = 255) String businessEmail, @Size(max = 32) String businessPhone,
+                                    @Size(max = 64) String taxCode, @Size(max = 255) String representativeName,
+                                    @Size(max = 32) String representativePhone, @Size(max = 1024) String logoUrl) {}
     public record ShopProductWrite(Long fruitId,
                                    @NotBlank @Size(max = 32) String category,
                                    @NotBlank @Size(max = 255) String displayName,
