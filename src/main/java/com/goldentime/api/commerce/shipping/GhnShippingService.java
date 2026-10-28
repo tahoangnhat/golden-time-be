@@ -1,6 +1,7 @@
 package com.goldentime.api.commerce.shipping;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.commerce.payment.WalletService;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentMap;
 
 @Service
 public class GhnShippingService {
+    private static final ObjectMapper ERROR_JSON = new ObjectMapper();
     private final JdbcTemplate jdbc;
     private final WalletService wallet;
     private final RestClient client;
@@ -377,12 +379,31 @@ public class GhnShippingService {
     }
 
     private static ApiException upstreamError(RestClientResponseException exception) {
+        String detail = upstreamMessage(exception.getResponseBodyAsString());
+        String status = Integer.toString(exception.getStatusCode().value());
         if (exception.getStatusCode().value() == 401 || exception.getStatusCode().value() == 403) {
             return new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "GHN chưa xác thực được tài khoản. Kiểm tra Token, Shop ID và quyền truy cập IP trên máy chủ.");
+                    detail.isBlank()
+                            ? "GHN chưa xác thực được tài khoản. Kiểm tra Token, Shop ID và quyền truy cập IP trên máy chủ."
+                            : "GHN từ chối xác thực (HTTP " + status + "): " + limit(detail, 240));
         }
-        return new ApiException(HttpStatus.BAD_GATEWAY,
-                "GHN chưa chấp nhận yêu cầu giao hàng. Kiểm tra địa chỉ, khối lượng và cấu hình dịch vụ.");
+        return new ApiException(HttpStatus.BAD_GATEWAY, detail.isBlank()
+                ? "GHN chưa chấp nhận yêu cầu giao hàng (HTTP " + status
+                    + "). Kiểm tra địa chỉ, khối lượng và cấu hình dịch vụ."
+                : "GHN từ chối yêu cầu (HTTP " + status + "): " + limit(detail, 240));
+    }
+
+    private static String upstreamMessage(String body) {
+        if (blank(body)) return "";
+        try {
+            JsonNode response = ERROR_JSON.readTree(body);
+            String message = response.path("message").asText("");
+            String code = response.path("code_message").asText("");
+            if (message.isBlank()) return code;
+            return code.isBlank() ? message : message + " (" + code + ")";
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private void requireConfigured() {
