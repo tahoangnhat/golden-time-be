@@ -54,7 +54,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/logout", "/api/business/applications", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/uploads/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/fruits", "/api/fruits/**", "/api/products", "/api/shops", "/api/shops/*/reviews", "/api/market/prices", "/api/trace/**", "/api/articles", "/api/articles/**", "/api/updates", "/api/map/geocoding/search", "/api/map/geocoding/reverse", "/api/map/nearby-chain-stores").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/fruits", "/api/fruits/**", "/api/products", "/api/products/**", "/api/shops", "/api/shops/*/reviews", "/api/market/prices", "/api/trace/**", "/api/articles", "/api/articles/**", "/api/updates", "/api/map/geocoding/search", "/api/map/geocoding/reverse", "/api/map/nearby-chain-stores").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/shop/**").hasRole("SHOP_OWNER")
                         .requestMatchers("/api/auth/me").authenticated()

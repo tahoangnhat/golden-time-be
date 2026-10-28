@@ -123,13 +123,13 @@ public class AiScanController {
         List<String> codes;
         if (shopId != null) {
             codes = jdbc.query("""
-                    SELECT batch_code FROM shop_products
-                    WHERE fruit_id = ? AND shop_id = ? AND batch_code IS NOT NULL
-                    ORDER BY id DESC LIMIT 1
+                    SELECT p.batch_code FROM shop_products p JOIN trace_batches b ON b.batch_code = p.batch_code
+                    WHERE p.fruit_id = ? AND p.shop_id = ? AND p.batch_code IS NOT NULL AND b.review_status = 'VERIFIED'
+                    ORDER BY p.id DESC LIMIT 1
                     """, (rs, row) -> rs.getString(1), fruitId, shopId);
             if (!codes.isEmpty()) return codes.get(0);
         }
-        codes = jdbc.query("SELECT batch_code FROM shop_products WHERE fruit_id = ? AND batch_code IS NOT NULL ORDER BY id DESC LIMIT 1",
+        codes = jdbc.query("SELECT p.batch_code FROM shop_products p JOIN trace_batches b ON b.batch_code = p.batch_code WHERE p.fruit_id = ? AND p.batch_code IS NOT NULL AND b.review_status = 'VERIFIED' ORDER BY p.id DESC LIMIT 1",
                 (rs, row) -> rs.getString(1), fruitId);
         return codes.isEmpty() ? null : codes.get(0);
     }

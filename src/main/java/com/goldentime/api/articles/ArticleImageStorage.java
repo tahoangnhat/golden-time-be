@@ -32,6 +32,7 @@ public class ArticleImageStorage {
     private static final String PRODUCT_FOLDER = "goldentime/products";
     private static final String BUSINESS_FOLDER = "goldentime/businesses";
     private static final String FARM_FOLDER = "goldentime/farms";
+    private static final String BATCH_EVIDENCE_FOLDER = "goldentime/batch-evidence";
     private static final ParameterizedTypeReference<Map<String, Object>> CLOUDINARY_RESPONSE =
             new ParameterizedTypeReference<>() {};
 
@@ -62,6 +63,10 @@ public class ArticleImageStorage {
 
     public StoredImage saveFarmImage(MultipartFile file) {
         return save(file, FARM_FOLDER);
+    }
+
+    public StoredImage saveBatchEvidence(MultipartFile file) {
+        return save(file, BATCH_EVIDENCE_FOLDER);
     }
 
     private StoredImage save(MultipartFile file, String folder) {

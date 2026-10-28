@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
@@ -97,6 +98,13 @@ public class ShopTraceabilityController {
         return traceability.updateBatch(CurrentUser.id(authentication), batchCode, request.toServiceRequest());
     }
 
+    @PostMapping(value = "/batches/evidence", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadBatchEvidence(Authentication authentication,
+            @RequestPart("file") MultipartFile file) {
+        traceability.batches(CurrentUser.id(authentication));
+        return imageStorage.saveBatchEvidence(file);
+    }
+
     public record FarmWrite(@NotBlank @Size(max = 255) String name,
                             @NotBlank @Size(max = 512) String address,
                             @NotBlank @Size(max = 255) String managerName,
@@ -124,11 +132,11 @@ public class ShopTraceabilityController {
                              @Size(max = 2000) String qualityNote,
                              LocalDate transportDate,
                              @Size(max = 2000) String transportInfo,
-                             @NotBlank @Size(max = 24) String batchStatus) {
+                             @NotEmpty @Size(max = 10) List<@NotBlank @Size(max = 1024) String> evidenceUrls) {
         TraceabilityManagementService.BatchWrite toServiceRequest() {
             return new TraceabilityManagementService.BatchWrite(productId, farmId, quantityKg, harvestDate,
                     packagingDate, qualityCheckedAt, qualityResult, qualityScore, qualityNote,
-                    transportDate, transportInfo, batchStatus);
+                    transportDate, transportInfo, evidenceUrls);
         }
     }
 }

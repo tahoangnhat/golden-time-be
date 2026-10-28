@@ -33,7 +33,7 @@ public class TraceController {
                 FROM trace_batches b LEFT JOIN fruits f ON f.id = b.fruit_id
                 LEFT JOIN farms farm ON farm.id = b.farm_id
                 LEFT JOIN shops shop ON shop.id = b.shop_id
-                WHERE UPPER(b.batch_code) = UPPER(?)
+                WHERE UPPER(b.batch_code) = UPPER(?) AND b.review_status = 'VERIFIED'
                 """, (rs, row) -> new Batch(rs.getString("batch_code"), rs.getString("product_name"),
                 rs.getString("origin"), rs.getString("supplier"), rs.getBoolean("certified"),
                 rs.getObject("harvest_date", LocalDate.class), rs.getObject("intake_date", LocalDate.class),

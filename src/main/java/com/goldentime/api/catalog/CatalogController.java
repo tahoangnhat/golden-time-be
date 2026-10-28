@@ -88,10 +88,12 @@ public class CatalogController {
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
                        (p.product_category = 'PREPARED') AS is_prepared, p.image_url,
-                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.batch_code
+                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, verified_batch.batch_code AS batch_code
                 FROM shop_products p
                 JOIN shops s ON s.id = p.shop_id
                 LEFT JOIN fruits f ON f.id = p.fruit_id
+                LEFT JOIN trace_batches verified_batch ON verified_batch.batch_code = p.batch_code
+                    AND verified_batch.review_status = 'VERIFIED'
                 WHERE p.status = 'ON_SALE' AND p.stock_kg > 0 AND s.status = 'ACTIVE'
                 """);
         List<Object> args = new ArrayList<>();
@@ -130,10 +132,12 @@ public class CatalogController {
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
                        (p.product_category = 'PREPARED') AS is_prepared, p.image_url,
-                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.batch_code
+                       p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, verified_batch.batch_code AS batch_code
                 FROM shop_products p
                 JOIN shops s ON s.id = p.shop_id
                 LEFT JOIN fruits f ON f.id = p.fruit_id
+                LEFT JOIN trace_batches verified_batch ON verified_batch.batch_code = p.batch_code
+                    AND verified_batch.review_status = 'VERIFIED'
                 WHERE p.id = ? AND p.status = 'ON_SALE' AND s.status = 'ACTIVE'
                 """, (rs, row) -> new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
                 (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),

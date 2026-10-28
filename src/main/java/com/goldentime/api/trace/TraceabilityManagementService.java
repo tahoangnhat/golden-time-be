@@ -89,13 +89,14 @@ public class TraceabilityManagementService {
     public List<BatchSummary> batches(long userId) {
         long shopId = shopId(userId);
         return jdbc.query(batchSelect() + " WHERE b.shop_id = ? ORDER BY b.created_at DESC, b.batch_code DESC",
-                TraceabilityManagementService::mapBatch, shopId);
+                TraceabilityManagementService::mapBatch, shopId).stream().map(this::withBatchEvidence).toList();
     }
 
     @Transactional
     public BatchSummary createBatch(long userId, BatchWrite request) {
         long shopId = shopId(userId);
         validateBatch(request);
+        List<String> evidenceUrls = validateBatchEvidence(request.evidenceUrls());
         Farm farm = approvedFarm(shopId, request.farmId());
         Product product = product(shopId, request.productId());
         String batchCode = createBatchCode();
@@ -105,14 +106,15 @@ public class TraceabilityManagementService {
                     (batch_code, fruit_id, product_name, origin, supplier, certified, harvest_date, intake_date,
                      certificates, public_note, product_id, shop_id, farm_id, quantity_kg, packaging_date,
                      quality_checked_at, quality_result, quality_score, quality_note, transport_date,
-                     transport_info, batch_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     transport_info, batch_status, review_status, review_version, submitted_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN_PROGRESS', 'PENDING_REVIEW', 1, NOW())
                 """, batchCode, product.fruitId(), product.name(), farm.address(), farm.name(),
                 certificates != null, request.harvestDate(), request.packagingDate(), certificates,
                 null, product.id(), shopId, farm.id(), request.quantityKg(),
                 request.packagingDate(), request.qualityCheckedAt(), optionalText(request.qualityResult()),
                 request.qualityScore(), optionalText(request.qualityNote()), request.transportDate(),
-                optionalText(request.transportInfo()), request.batchStatus());
+                optionalText(request.transportInfo()));
+        saveBatchEvidence(batchCode, 1, evidenceUrls);
         jdbc.update("UPDATE shop_products SET batch_code = ? WHERE id = ? AND shop_id = ?", batchCode, product.id(), shopId);
         refreshTimeline(batchCode, farm, request, product.shopName(), product.shopAddress());
         return batch(shopId, batchCode);
@@ -122,11 +124,12 @@ public class TraceabilityManagementService {
     public BatchSummary updateBatch(long userId, String batchCode, BatchWrite request) {
         long shopId = shopId(userId);
         validateBatch(request);
+        List<String> evidenceUrls = validateBatchEvidence(request.evidenceUrls());
         jdbc.query("SELECT batch_code FROM trace_batches WHERE shop_id = ? AND UPPER(batch_code) = UPPER(?) FOR UPDATE",
                 (rs, row) -> rs.getString(1), shopId, batchCode);
         BatchSummary current = batch(shopId, batchCode);
-        if (current.farmId() == null) {
-            throw new ApiException(HttpStatus.CONFLICT, "Lô cũ chưa có Farm đã xác minh nên không thể chỉnh sửa trong luồng Batch mới.");
+        if (!"NEEDS_CORRECTION".equals(current.reviewStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Chỉ có thể chỉnh sửa và gửi lại lô được Admin yêu cầu sửa.");
         }
         Farm farm = approvedFarm(shopId, request.farmId());
         Product product = product(shopId, request.productId());
@@ -135,14 +138,17 @@ public class TraceabilityManagementService {
                 UPDATE trace_batches SET fruit_id = ?, product_name = ?, origin = ?, supplier = ?, certified = ?,
                     harvest_date = ?, intake_date = ?, certificates = ?, product_id = ?, farm_id = ?,
                     quantity_kg = ?, packaging_date = ?, quality_checked_at = ?, quality_result = ?, quality_score = ?,
-                    quality_note = ?, transport_date = ?, transport_info = ?, batch_status = ?
+                    quality_note = ?, transport_date = ?, transport_info = ?, review_status = 'PENDING_REVIEW',
+                    review_version = review_version + 1, review_note = NULL, reviewed_by = NULL,
+                    reviewed_at = NULL, submitted_at = NOW()
                 WHERE batch_code = ? AND shop_id = ?
                 """, product.fruitId(), product.name(), farm.address(), farm.name(), certificates != null,
                 request.harvestDate(), request.packagingDate(), certificates,
                 product.id(), farm.id(), request.quantityKg(), request.packagingDate(), request.qualityCheckedAt(),
                 optionalText(request.qualityResult()), request.qualityScore(), optionalText(request.qualityNote()),
-                request.transportDate(), optionalText(request.transportInfo()), request.batchStatus(),
+                request.transportDate(), optionalText(request.transportInfo()),
                 current.batchCode(), shopId);
+        saveBatchEvidence(current.batchCode(), current.reviewVersion() + 1, evidenceUrls);
         if (current.productId() != null && current.productId().longValue() != product.id()) {
             jdbc.update("UPDATE shop_products SET batch_code = NULL WHERE id = ? AND shop_id = ? AND batch_code = ?",
                     current.productId(), shopId, current.batchCode());
@@ -191,7 +197,35 @@ public class TraceabilityManagementService {
     @Transactional(readOnly = true)
     public List<BatchSummary> adminBatches() {
         return jdbc.query(batchSelect() + " ORDER BY b.created_at DESC, b.batch_code DESC",
-                TraceabilityManagementService::mapBatch);
+                TraceabilityManagementService::mapBatch).stream().map(this::withBatchEvidence).toList();
+    }
+
+    @Transactional
+    public BatchSummary decideBatch(String batchCode, boolean approved, String note, long adminId) {
+        List<String> lockedCodes = jdbc.query("SELECT batch_code FROM trace_batches WHERE UPPER(batch_code) = UPPER(?) FOR UPDATE",
+                (rs, row) -> rs.getString(1), batchCode);
+        if (lockedCodes.isEmpty()) throw ApiException.notFound("Không tìm thấy lô hàng.");
+        BatchSummary current = adminBatch(batchCode);
+        if (!"PENDING_REVIEW".equals(current.reviewStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Lô này không còn chờ xác minh.");
+        }
+        String normalizedNote = optionalText(note);
+        if (!approved && normalizedNote == null) throw ApiException.badRequest("Hãy ghi rõ nội dung cần Business chỉnh sửa.");
+        if (current.evidenceUrls().isEmpty()) throw ApiException.badRequest("Lô cần có ít nhất một ảnh bằng chứng trước khi xác minh.");
+        if (approved && (current.shopId() == null || current.productId() == null || current.farmId() == null
+                || !"APPROVED".equals(current.farmStatus()))) {
+            throw ApiException.badRequest("Chỉ xác minh lô đã liên kết với Business, sản phẩm và Farm được duyệt.");
+        }
+        String decision = approved ? "VERIFIED" : "NEEDS_CORRECTION";
+        jdbc.update("""
+                UPDATE trace_batches SET review_status = ?, review_note = ?, reviewed_by = ?, reviewed_at = NOW()
+                WHERE batch_code = ? AND review_status = 'PENDING_REVIEW'
+                """, decision, approved ? null : normalizedNote, adminId, current.batchCode());
+        jdbc.update("""
+                INSERT INTO trace_batch_reviews (batch_code, review_version, decision, note, reviewed_by)
+                VALUES (?, ?, ?, ?, ?)
+                """, current.batchCode(), current.reviewVersion(), decision, approved ? null : normalizedNote, adminId);
+        return adminBatch(current.batchCode());
     }
 
     @Transactional
@@ -201,6 +235,9 @@ public class TraceabilityManagementService {
                 (rs, row) -> rs.getString(1), batchCode);
         if (lockedCodes.isEmpty()) throw ApiException.notFound("Không tìm thấy lô hàng.");
         BatchSummary current = adminBatch(batchCode);
+        if (!"VERIFIED".equals(current.reviewStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Chỉ có thể cập nhật vận hành cho lô đã được xác minh.");
+        }
         if (current.batchStatus().equals(batchStatus)) return current;
         jdbc.update("UPDATE trace_batches SET batch_status = ? WHERE batch_code = ?", batchStatus, current.batchCode());
         Integer nextStep = jdbc.queryForObject("SELECT COALESCE(MAX(step_order), 0) + 1 FROM trace_events WHERE batch_code = ?",
@@ -284,14 +321,14 @@ public class TraceabilityManagementService {
         List<BatchSummary> matches = jdbc.query(batchSelect() + " WHERE b.shop_id = ? AND UPPER(b.batch_code) = UPPER(?)",
                 TraceabilityManagementService::mapBatch, shopId, code);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy lô hàng của doanh nghiệp.");
-        return matches.get(0);
+        return withBatchEvidence(matches.get(0));
     }
 
     private BatchSummary adminBatch(String code) {
         List<BatchSummary> matches = jdbc.query(batchSelect() + " WHERE UPPER(b.batch_code) = UPPER(?)",
                 TraceabilityManagementService::mapBatch, code);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy lô hàng.");
-        return matches.get(0);
+        return withBatchEvidence(matches.get(0));
     }
 
     private boolean hasBatches(long farmId) {
@@ -312,6 +349,7 @@ public class TraceabilityManagementService {
                 SELECT b.batch_code, b.product_name, b.product_id, b.shop_id, b.farm_id, b.quantity_kg,
                        b.harvest_date, b.packaging_date, b.quality_checked_at, b.quality_result, b.quality_score,
                        b.quality_note, b.transport_date, b.transport_info, b.batch_status, b.created_at,
+                       b.origin, b.review_status, b.review_version, b.review_note, b.reviewed_at,
                        s.name AS shop_name, f.name AS farm_name, f.status AS farm_status
                 FROM trace_batches b LEFT JOIN shops s ON s.id = b.shop_id LEFT JOIN farms f ON f.id = b.farm_id
                 """;
@@ -334,18 +372,43 @@ public class TraceabilityManagementService {
                 rs.getString("quality_result"), (Integer) rs.getObject("quality_score"), rs.getString("quality_note"),
                 rs.getDate("transport_date") == null ? null : rs.getDate("transport_date").toLocalDate(),
                 rs.getString("transport_info"), rs.getString("batch_status"), rs.getTimestamp("created_at").toInstant(),
-                rs.getString("farm_name"), rs.getString("farm_status"), rs.getString("shop_name"));
+                rs.getString("farm_name"), rs.getString("farm_status"), rs.getString("shop_name"), rs.getString("origin"),
+                rs.getString("review_status"), rs.getInt("review_version"), rs.getString("review_note"),
+                nullableInstant(rs.getTimestamp("reviewed_at")), List.of());
+    }
+
+    private BatchSummary withBatchEvidence(BatchSummary batch) {
+        List<String> images = jdbc.query("""
+                SELECT image_url FROM trace_batch_evidence
+                WHERE batch_code = ? AND review_version = ? ORDER BY display_order, id
+                """, (rs, row) -> rs.getString("image_url"), batch.batchCode(), batch.reviewVersion());
+        return batch.withEvidenceUrls(images);
+    }
+
+    private void saveBatchEvidence(String batchCode, int reviewVersion, List<String> imageUrls) {
+        for (int i = 0; i < imageUrls.size(); i++) {
+            jdbc.update("""
+                    INSERT INTO trace_batch_evidence (batch_code, review_version, image_url, display_order)
+                    VALUES (?, ?, ?, ?)
+                    """, batchCode, reviewVersion, imageUrls.get(i), i);
+        }
     }
 
     private static void validateBatch(BatchWrite request) {
         if (request.quantityKg() == null || request.quantityKg().signum() <= 0) throw ApiException.badRequest("Số lượng lô phải lớn hơn 0.");
-        if (!BATCH_STATUSES.contains(request.batchStatus())) throw ApiException.badRequest("Trạng thái lô không hợp lệ.");
         if (request.qualityScore() != null && (request.qualityScore() < 0 || request.qualityScore() > 100)) {
             throw ApiException.badRequest("Điểm kiểm định cần nằm trong khoảng 0 đến 100.");
         }
         if (request.harvestDate() != null && request.packagingDate() != null && request.packagingDate().isBefore(request.harvestDate())) {
             throw ApiException.badRequest("Ngày đóng gói không thể trước ngày thu hoạch.");
         }
+    }
+
+    private static List<String> validateBatchEvidence(List<String> values) {
+        List<String> urls = validateImageUrls(values, null);
+        if (urls.isEmpty()) throw ApiException.badRequest("Hãy đính kèm ít nhất một ảnh bằng chứng cho lô hàng.");
+        if (urls.size() > 10) throw ApiException.badRequest("Mỗi hồ sơ lô được đính kèm tối đa 10 ảnh bằng chứng.");
+        return urls;
     }
 
     private static String createBatchCode() {
@@ -429,14 +492,22 @@ public class TraceabilityManagementService {
     public record BatchWrite(long productId, long farmId, BigDecimal quantityKg, LocalDate harvestDate,
                              LocalDate packagingDate, LocalDate qualityCheckedAt, String qualityResult,
                              Integer qualityScore, String qualityNote, LocalDate transportDate,
-                             String transportInfo, String batchStatus) {}
+                             String transportInfo, List<String> evidenceUrls) {}
 
     public record BatchSummary(String batchCode, String product, Long productId, Long shopId, Long farmId,
                                BigDecimal quantityKg, LocalDate harvestDate, LocalDate packagingDate,
                                LocalDate qualityCheckedAt, String qualityResult, Integer qualityScore,
                                String qualityNote, LocalDate transportDate, String transportInfo,
                                String batchStatus, Instant createdAt, String farmName, String farmStatus,
-                               String shopName) {}
+                               String shopName, String origin, String reviewStatus, int reviewVersion,
+                               String reviewNote, Instant reviewedAt, List<String> evidenceUrls) {
+        BatchSummary withEvidenceUrls(List<String> urls) {
+            return new BatchSummary(batchCode, product, productId, shopId, farmId, quantityKg, harvestDate,
+                    packagingDate, qualityCheckedAt, qualityResult, qualityScore, qualityNote, transportDate,
+                    transportInfo, batchStatus, createdAt, farmName, farmStatus, shopName, origin, reviewStatus,
+                    reviewVersion, reviewNote, reviewedAt, urls);
+        }
+    }
 
     private record Product(long id, Long fruitId, String name, String shopName, String shopAddress) {}
 }
