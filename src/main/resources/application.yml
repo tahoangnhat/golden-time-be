@@ -71,6 +71,16 @@ app:
       webhook-url: ${PAYOS_WEBHOOK_URL:https://golden-time-be.onrender.com/api/payments/payos/webhook}
       link-expiry-minutes: ${PAYOS_LINK_EXPIRY_MINUTES:15}
       expiry-scan-ms: ${PAYOS_EXPIRY_SCAN_MS:60000}
+  shipping:
+    ghn:
+      api-base-url: ${GHN_API_BASE_URL:https://dev-online-gateway.ghn.vn/shiip/public-api}
+      token: ${GHN_TOKEN:}
+      shop-id: ${GHN_SHOP_ID:0}
+      webhook-secret: ${GHN_WEBHOOK_SECRET:}
+      default-length-cm: ${GHN_DEFAULT_LENGTH_CM:30}
+      default-width-cm: ${GHN_DEFAULT_WIDTH_CM:20}
+      default-height-cm: ${GHN_DEFAULT_HEIGHT_CM:15}
+      packaging-weight-grams: ${GHN_PACKAGING_WEIGHT_GRAMS:100}
   bootstrap:
     admin-email: ${ADMIN_BOOTSTRAP_EMAIL:}
     admin-password: ${ADMIN_BOOTSTRAP_PASSWORD:}

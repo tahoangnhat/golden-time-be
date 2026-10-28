@@ -3,6 +3,7 @@ package com.goldentime.api.commerce;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.commerce.payment.PayOSPaymentService;
 import com.goldentime.api.commerce.payment.WalletService;
+import com.goldentime.api.commerce.shipping.GhnShippingService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -32,19 +33,21 @@ import java.util.Locale;
 @RequestMapping("/api/orders")
 @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
 public class OrderController {
-    private static final long SHIPPING_FEE = 15000;
     private final JdbcTemplate jdbc;
     private final PayOSPaymentService payments;
     private final WalletService wallet;
+    private final GhnShippingService shipping;
     private final String frontendUrl;
     private final int paymentLinkExpiryMinutes;
 
     public OrderController(JdbcTemplate jdbc, PayOSPaymentService payments, WalletService wallet,
+                           GhnShippingService shipping,
                            @Value("${app.payment.frontend-url:http://localhost:8080}") String frontendUrl,
                            @Value("${app.payment.payos.link-expiry-minutes:15}") int paymentLinkExpiryMinutes) {
         this.jdbc = jdbc;
         this.payments = payments;
         this.wallet = wallet;
+        this.shipping = shipping;
         this.frontendUrl = frontendUrl;
         this.paymentLinkExpiryMinutes = paymentLinkExpiryMinutes;
     }
@@ -75,15 +78,24 @@ public class OrderController {
             products.add(product.withRequest(item.quantityKg(), lineTotal));
         }
         if (subtotal <= 0) throw ApiException.badRequest("Giỏ hàng không có giá trị hợp lệ.");
-        long total = Math.addExact(subtotal, SHIPPING_FEE);
+        String province = request.deliveryProvinceName().trim();
+        String ward = request.deliveryWardName().trim();
+        String fullAddress = String.join(", ", request.deliveryAddress().trim(), ward, province);
+        List<GhnShippingService.ShippingItem> shippingItems = products.stream()
+                .map(product -> new GhnShippingService.ShippingItem(product.name(), product.quantityKg(), product.lineTotal())).toList();
+        GhnShippingService.Quote quote = shipping.quote(shopId, request.deliveryName().trim(), request.deliveryPhone().trim(),
+                fullAddress, province, ward, shippingItems, subtotal, "COD".equals(payment) ? subtotal : 0);
+        long shippingFee = quote.shippingFee();
+        long total = Math.addExact(subtotal, shippingFee);
 
         Long orderId = jdbc.queryForObject("""
                 INSERT INTO orders (user_id, shop_id, status, total_amount, note, payment_method, payment_status,
-                    delivery_name, delivery_phone, delivery_address, subtotal_amount, shipping_fee)
-                VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    delivery_name, delivery_phone, delivery_address, delivery_province_name, delivery_ward_name,
+                    subtotal_amount, shipping_fee)
+                VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """, Long.class, userId, shopId, total, blankToNull(request.note()), payment, paymentStatus,
-                request.deliveryName().trim(), request.deliveryPhone().trim(), request.deliveryAddress().trim(), subtotal, SHIPPING_FEE);
+                request.deliveryName().trim(), request.deliveryPhone().trim(), fullAddress, province, ward, subtotal, shippingFee);
         for (LockedProduct product : products) {
             int updated = jdbc.update("UPDATE shop_products SET stock_kg = stock_kg - ? WHERE id = ? AND stock_kg >= ?",
                     product.quantityKg(), product.id(), product.quantityKg());
@@ -115,15 +127,20 @@ public class OrderController {
         long userId = CurrentUser.id(authentication);
         return jdbc.query("""
                 SELECT o.id, o.shop_id, s.name AS shop_name, o.status, o.total_amount,
-                       o.payment_method, o.payment_status, o.created_at, COUNT(oi.id) AS item_count
+                       o.payment_method, o.payment_status, o.created_at, COUNT(oi.id) AS item_count,
+                       sh.carrier_order_code, sh.carrier_status, sh.expected_delivery_at
                 FROM orders o JOIN shops s ON s.id = o.shop_id
                 LEFT JOIN order_items oi ON oi.order_id = o.id
+                LEFT JOIN order_shipments sh ON sh.order_id = o.id
                 WHERE o.user_id = ?
-                GROUP BY o.id, s.name ORDER BY o.created_at DESC
+                GROUP BY o.id, s.name, sh.carrier_order_code, sh.carrier_status, sh.expected_delivery_at
+                ORDER BY o.created_at DESC
                 """, (rs, row) -> new OrderSummary(rs.getLong("id"), rs.getLong("shop_id"),
                 rs.getString("shop_name"), rs.getString("status"), rs.getLong("total_amount"),
                 rs.getString("payment_method"), rs.getString("payment_status"),
-                rs.getTimestamp("created_at").toInstant(), rs.getInt("item_count")), userId);
+                rs.getTimestamp("created_at").toInstant(), rs.getInt("item_count"), rs.getString("carrier_order_code"),
+                rs.getString("carrier_status"), rs.getTimestamp("expected_delivery_at") == null ? null
+                        : rs.getTimestamp("expected_delivery_at").toInstant()), userId);
     }
 
     @GetMapping("/{id}")
@@ -157,8 +174,10 @@ public class OrderController {
                 SELECT o.id, o.shop_id, s.name AS shop_name, o.status, o.total_amount,
                        o.subtotal_amount, o.shipping_fee, o.payment_method, o.payment_status,
                        o.payos_checkout_url, o.payos_qr_code, o.payment_expires_at, o.note,
-                       o.delivery_name, o.delivery_phone, o.delivery_address, o.created_at
+                       o.delivery_name, o.delivery_phone, o.delivery_address, o.created_at,
+                       sh.carrier_order_code, sh.carrier_status, sh.carrier_fee, sh.expected_delivery_at
                 FROM orders o JOIN shops s ON s.id = o.shop_id
+                LEFT JOIN order_shipments sh ON sh.order_id = o.id
                 WHERE o.id = ? AND o.user_id = ?
                 """, (rs, row) -> new OrderHeader(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
                 rs.getString("status"), rs.getLong("total_amount"), rs.getLong("subtotal_amount"),
@@ -166,7 +185,9 @@ public class OrderController {
                 rs.getString("payos_checkout_url"), rs.getString("payos_qr_code"),
                 rs.getTimestamp("payment_expires_at") == null ? null : rs.getTimestamp("payment_expires_at").toInstant(),
                 rs.getString("note"), rs.getString("delivery_name"), rs.getString("delivery_phone"),
-                rs.getString("delivery_address"), rs.getTimestamp("created_at").toInstant()), orderId, userId);
+                rs.getString("delivery_address"), rs.getTimestamp("created_at").toInstant(),
+                rs.getString("carrier_order_code"), rs.getString("carrier_status"), rs.getLong("carrier_fee"),
+                rs.getTimestamp("expected_delivery_at") == null ? null : rs.getTimestamp("expected_delivery_at").toInstant()), orderId, userId);
         if (headers.isEmpty()) throw ApiException.notFound("Không tìm thấy đơn hàng.");
         OrderHeader header = headers.get(0);
         List<OrderItem> items = jdbc.query("""
@@ -181,7 +202,8 @@ public class OrderController {
         return new OrderDetail(header.id(), header.shopId(), header.shopName(), header.status(), header.subtotal(),
                 header.shippingFee(), header.total(), header.paymentMethod(), header.paymentStatus(),
                 header.checkoutUrl(), header.qrCode(), header.paymentExpiresAt(), header.note(), header.deliveryName(),
-                header.deliveryPhone(), header.deliveryAddress(), header.createdAt(), items);
+                header.deliveryPhone(), header.deliveryAddress(), header.createdAt(), header.trackingCode(),
+                header.carrierStatus(), header.carrierFee(), header.expectedDeliveryAt(), items);
     }
 
     @PostMapping("/{id}/cancel-payment")
@@ -216,7 +238,8 @@ public class OrderController {
     private record OrderHeader(long id, long shopId, String shopName, String status, long total,
                                long subtotal, long shippingFee, String paymentMethod, String paymentStatus,
                                String checkoutUrl, String qrCode, Instant paymentExpiresAt, String note,
-                               String deliveryName, String deliveryPhone, String deliveryAddress, Instant createdAt) {}
+                               String deliveryName, String deliveryPhone, String deliveryAddress, Instant createdAt,
+                               String trackingCode, String carrierStatus, long carrierFee, Instant expectedDeliveryAt) {}
     private record ReceiptOrder(long shopId, String status, String paymentReference) {}
 
     public record ItemRequest(@NotNull Long productId,
@@ -225,7 +248,9 @@ public class OrderController {
                                      @NotBlank @Size(max = 32) String paymentMethod,
                                      @NotBlank @Size(max = 255) String deliveryName,
                                      @NotBlank @Size(max = 32) String deliveryPhone,
-                                     @NotBlank @Size(max = 512) String deliveryAddress,
+                                     @NotBlank @Size(max = 400) String deliveryAddress,
+                                     @NotBlank @Size(max = 255) String deliveryProvinceName,
+                                     @NotBlank @Size(max = 255) String deliveryWardName,
                                      @Size(max = 2000) String note) {}
     public record OrderItem(long productId, String name, String emoji, BigDecimal quantityKg,
                             long unitPrice, long lineTotal) {}
@@ -233,8 +258,10 @@ public class OrderController {
                               long shippingFee, long total, String paymentMethod, String paymentStatus,
                               String checkoutUrl, String qrCode, Instant paymentExpiresAt, String note,
                               String deliveryName, String deliveryPhone, String deliveryAddress,
-                              Instant createdAt, List<OrderItem> items) {}
+                              Instant createdAt, String trackingCode, String carrierStatus, long carrierFee,
+                              Instant expectedDeliveryAt, List<OrderItem> items) {}
     public record OrderSummary(long id, long shopId, String shopName, String status, long total,
-                               String paymentMethod, String paymentStatus, Instant createdAt, int itemCount) {}
+                               String paymentMethod, String paymentStatus, Instant createdAt, int itemCount,
+                               String trackingCode, String carrierStatus, Instant expectedDeliveryAt) {}
     public record ReceiptConfirmation(boolean walletCredited) {}
 }

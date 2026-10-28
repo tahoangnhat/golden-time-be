@@ -2,6 +2,7 @@ package com.goldentime.api.partner;
 
 import com.goldentime.api.articles.ArticleImageStorage;
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.commerce.shipping.GhnShippingService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -56,10 +57,12 @@ public class PartnerDataController {
 
     private final JdbcTemplate jdbc;
     private final ArticleImageStorage imageStorage;
+    private final GhnShippingService shipping;
 
-    public PartnerDataController(JdbcTemplate jdbc, ArticleImageStorage imageStorage) {
+    public PartnerDataController(JdbcTemplate jdbc, ArticleImageStorage imageStorage, GhnShippingService shipping) {
         this.jdbc = jdbc;
         this.imageStorage = imageStorage;
+        this.shipping = shipping;
     }
 
     @GetMapping("/profile")
@@ -87,12 +90,15 @@ public class PartnerDataController {
                     tax_code = CASE WHEN ? IS NULL THEN tax_code ELSE NULLIF(?, '') END,
                     representative_name = CASE WHEN ? IS NULL THEN representative_name ELSE NULLIF(?, '') END,
                     representative_phone = CASE WHEN ? IS NULL THEN representative_phone ELSE NULLIF(?, '') END,
-                    logo_url = CASE WHEN ? IS NULL THEN logo_url ELSE NULLIF(?, '') END
+                    logo_url = CASE WHEN ? IS NULL THEN logo_url ELSE NULLIF(?, '') END,
+                    pickup_province_name = CASE WHEN ? IS NULL THEN pickup_province_name ELSE NULLIF(?, '') END,
+                    pickup_ward_name = CASE WHEN ? IS NULL THEN pickup_ward_name ELSE NULLIF(?, '') END
                 WHERE id = ?
                 """, request.name() == null ? null : request.name().trim(), address, request.latitude(), request.longitude(), placeId,
                 request.businessEmail(), request.businessEmail(), request.businessPhone(), request.businessPhone(),
                 request.taxCode(), request.taxCode(), request.representativeName(), request.representativeName(),
-                request.representativePhone(), request.representativePhone(), request.logoUrl(), request.logoUrl(), shopId);
+                request.representativePhone(), request.representativePhone(), request.logoUrl(), request.logoUrl(),
+                request.pickupProvinceName(), request.pickupProvinceName(), request.pickupWardName(), request.pickupWardName(), shopId);
         if (request.businessPhone() != null) {
             jdbc.update("UPDATE users SET phone = NULLIF(?, '') WHERE shop_id = ? AND role = 'SHOP_OWNER'",
                     request.businessPhone().trim(), shopId);
@@ -241,6 +247,7 @@ public class PartnerDataController {
         if ("PAYOS".equals(order.paymentMethod()) && !"PAID".equals(order.paymentStatus())) {
             throw new ApiException(HttpStatus.CONFLICT, "Đơn PayOS cần thanh toán thành công trước khi giao hàng.");
         }
+        shipping.createShipment(orderId, shopId);
         int updated = jdbc.update("UPDATE orders SET status = 'IN_TRANSIT' WHERE id = ? AND shop_id = ? AND status IN ('PENDING', 'CONFIRMED')",
                 orderId, shopId);
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
@@ -252,14 +259,18 @@ public class PartnerDataController {
         List<ShopOrder> orders = jdbc.query("""
                 SELECT o.id, o.user_id, u.full_name AS customer, o.total_amount, o.subtotal_amount,
                        o.shipping_fee, o.status, o.payment_method, o.payment_status, o.delivery_name, o.delivery_phone,
-                       o.delivery_address, o.note, o.created_at
+                       o.delivery_address, o.note, o.created_at,
+                       sh.carrier_order_code, sh.carrier_status, sh.carrier_fee, sh.expected_delivery_at
                 FROM orders o JOIN users u ON u.id = o.user_id
+                LEFT JOIN order_shipments sh ON sh.order_id = o.id
                 WHERE o.shop_id = ? ORDER BY o.created_at DESC, o.id DESC
                 """, (rs, row) -> new ShopOrder(rs.getLong("id"), rs.getString("customer"),
                 rs.getLong("total_amount"), rs.getLong("subtotal_amount"), rs.getLong("shipping_fee"),
                 rs.getString("status"), rs.getString("payment_method"), rs.getString("payment_status"), rs.getString("delivery_name"),
                 rs.getString("delivery_phone"), rs.getString("delivery_address"), rs.getString("note"),
-                rs.getTimestamp("created_at").toInstant(), List.of()), shopId);
+                rs.getTimestamp("created_at").toInstant(), rs.getString("carrier_order_code"), rs.getString("carrier_status"),
+                rs.getLong("carrier_fee"), rs.getTimestamp("expected_delivery_at") == null ? null
+                        : rs.getTimestamp("expected_delivery_at").toInstant(), List.of()), shopId);
         return orders.stream().map(order -> order.withItems(jdbc.query("""
                         SELECT p.display_name, COALESCE(f.emoji, '🍎') AS emoji, oi.quantity_kg, oi.unit_price, oi.line_total
                         FROM order_items oi JOIN shop_products p ON p.id = oi.shop_product_id
@@ -333,7 +344,8 @@ public class PartnerDataController {
         List<ShopProfile> shops = jdbc.query("""
                 SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.google_place_id, s.status,
                        s.description, s.rating_avg, s.review_count, s.business_email, s.business_phone,
-                       s.tax_code, s.representative_name, s.representative_phone, s.logo_url
+                       s.tax_code, s.representative_name, s.representative_phone, s.logo_url,
+                       s.pickup_province_name, s.pickup_ward_name
                 FROM shops s LEFT JOIN users u ON u.id = ?
                 WHERE s.owner_user_id = ? OR s.id = u.shop_id
                 ORDER BY s.id LIMIT 1
@@ -341,7 +353,8 @@ public class PartnerDataController {
                 rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("google_place_id"), rs.getString("status"),
                 rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count"),
                 rs.getString("business_email"), rs.getString("business_phone"), rs.getString("tax_code"),
-                rs.getString("representative_name"), rs.getString("representative_phone"), rs.getString("logo_url")), userId, userId);
+                rs.getString("representative_name"), rs.getString("representative_phone"), rs.getString("logo_url"),
+                rs.getString("pickup_province_name"), rs.getString("pickup_ward_name")), userId, userId);
         if (shops.isEmpty()) throw ApiException.forbidden("Tài khoản chưa được liên kết với cửa hàng.");
         return shops.get(0);
     }
@@ -360,13 +373,15 @@ public class PartnerDataController {
     public record ShopProfile(long id, String name, String address, double latitude, double longitude,
                               String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount,
                               String businessEmail, String businessPhone, String taxCode,
-                              String representativeName, String representativePhone, String logoUrl) {}
+                              String representativeName, String representativePhone, String logoUrl,
+                              String pickupProvinceName, String pickupWardName) {}
     public record ShopLocationUpdate(@NotBlank @Size(max = 512) String address, @NotNull Double latitude,
                                     @NotNull Double longitude, @Size(max = 255) String googlePlaceId,
                                     @Size(min = 2, max = 255) String name,
                                     @Size(max = 255) String businessEmail, @Size(max = 32) String businessPhone,
                                     @Size(max = 64) String taxCode, @Size(max = 255) String representativeName,
-                                    @Size(max = 32) String representativePhone, @Size(max = 1024) String logoUrl) {}
+                                    @Size(max = 32) String representativePhone, @Size(max = 1024) String logoUrl,
+                                    @Size(max = 255) String pickupProvinceName, @Size(max = 255) String pickupWardName) {}
     public record ShopProductWrite(Long fruitId,
                                    @NotBlank @Size(max = 32) String category,
                                    @NotBlank @Size(max = 255) String displayName,
@@ -387,10 +402,12 @@ public class PartnerDataController {
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
     public record ShopOrder(long id, String customer, long total, long subtotal, long shippingFee, String status,
                             String payment, String paymentStatus, String deliveryName, String deliveryPhone, String deliveryAddress,
-                            String note, Instant createdAt, List<ShopOrderItem> items) {
+                            String note, Instant createdAt, String trackingCode, String carrierStatus,
+                            long carrierFee, Instant expectedDeliveryAt, List<ShopOrderItem> items) {
         ShopOrder withItems(List<ShopOrderItem> orderItems) {
             return new ShopOrder(id, customer, total, subtotal, shippingFee, status, payment, paymentStatus, deliveryName,
-                    deliveryPhone, deliveryAddress, note, createdAt, orderItems);
+                    deliveryPhone, deliveryAddress, note, createdAt, trackingCode, carrierStatus, carrierFee,
+                    expectedDeliveryAt, orderItems);
         }
     }
     private record ShipmentOrder(String status, String paymentMethod, String paymentStatus) {}

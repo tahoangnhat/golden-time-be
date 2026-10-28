@@ -24,8 +24,23 @@ $env:MAIL_USERNAME = "<tài khoản SMTP>"
 $env:MAIL_PASSWORD = "<mật khẩu ứng dụng SMTP>"
 $env:MAIL_FROM = "<địa chỉ gửi email>"
 $env:BUSINESS_PORTAL_URL = "http://localhost:8080/business/login"
+$env:GHN_TOKEN = "<token GHN của môi trường đang dùng>"
+$env:GHN_SHOP_ID = "<Shop ID GHN>"
+$env:GHN_WEBHOOK_SECRET = "<chuỗi bí mật tự tạo>"
 mvn spring-boot:run
 ```
+
+### Kết nối giao hàng GHN
+
+Backend gọi GHN để lấy danh mục tỉnh/phường, xem trước cước ở checkout và tạo vận đơn khi Business bấm **Giao hàng GHN**. Tài khoản Staging và Production của GHN tách riêng; cấu hình đúng môi trường trước khi chạy. Mặc định backend dùng Staging. Khi triển khai thật, đặt `GHN_API_BASE_URL=https://online-gateway.ghn.vn/shiip/public-api` cùng Token và Shop ID Production. Giữ `GHN_TOKEN`, `GHN_SHOP_ID` và `GHN_WEBHOOK_SECRET` trong Environment/Secrets của máy chủ, không đưa vào frontend, Git hoặc chat.
+
+Tham khảo GHN Developer: [tạo vận đơn](https://developer.ghn.vn/vi/docs/order/create), [xem trước và tính cước](https://developer.ghn.vn/vi/docs/order/preview), [tỉnh/thành mới](https://developer.ghn.vn/vi/docs/master-data/get-province-new), [phường/xã mới](https://developer.ghn.vn/vi/docs/master-data/get-ward-new), [webhook trạng thái](https://developer.ghn.vn/en/docs/webhook/callback-order-status).
+
+Trong hồ sơ GHN Developer, tạo webhook trạng thái đơn trỏ đến `https://<domain-api>/api/shipping/ghn/webhook` và thêm header tùy chỉnh `X-GHN-Webhook-Secret` trùng với `GHN_WEBHOOK_SECRET`. Cấu hình webhook riêng cho Staging và Production. Backend xử lý callback lặp an toàn theo mã vận đơn, loại sự kiện và thời điểm; nếu callback đến trước lúc đơn được lưu xong, backend trả lỗi tạm thời để GHN gửi lại.
+
+Business cần lưu địa chỉ lấy hàng chi tiết, số điện thoại và chọn đúng tỉnh/phường GHN tại **Hồ sơ cửa hàng**. Khách chọn tỉnh/phường khi checkout; backend tính phí bằng API xem trước đơn GHN rồi tính lại khi tạo đơn. Kích thước kiện mặc định là 30 × 20 × 15 cm, cộng 100 g bao bì vào khối lượng sản phẩm (đổi bằng `GHN_DEFAULT_LENGTH_CM`, `GHN_DEFAULT_WIDTH_CM`, `GHN_DEFAULT_HEIGHT_CM`, `GHN_PACKAGING_WEIGHT_GRAMS`). Đơn trên 50 kg bị từ chối vì vượt giới hạn endpoint GHN hiện tại.
+
+GHN chuyển trạng thái vận đơn độc lập với trạng thái xác nhận nhận hàng của khách. Khách thấy mã GHN và cập nhật webhook trong **Đơn hàng**; ví Business chỉ ghi doanh thu sau khi khách xác nhận đã nhận và khoản thanh toán đã được đối soát. Với COD, sự kiện GHN xác nhận đã chuyển tiền đánh dấu COD đã thu; việc ghi ví vẫn chờ khách xác nhận nhận hàng.
 
 `ADMIN_BOOTSTRAP_EMAIL` và `ADMIN_BOOTSTRAP_PASSWORD` là tùy chọn. Nếu đặt cả hai, backend tạo tài khoản quản trị ban đầu khi email chưa tồn tại. Nếu tài khoản admin đã tồn tại, mặc định backend không thay đổi mật khẩu. Để chủ động đặt lại mật khẩu tài khoản admin hiện có, đặt thêm `ADMIN_BOOTSTRAP_RESET_PASSWORD=true` cho lần khởi động đó; thao tác cũng bật lại tài khoản và thu hồi refresh token cũ. Hãy bỏ biến reset sau khi khởi động xong để các lần chạy sau không tiếp tục đặt lại mật khẩu. Mật khẩu yêu cầu tối thiểu 12 ký tự; không đưa mật khẩu thật vào git hoặc gửi qua chat.
 
@@ -49,6 +64,7 @@ Hồ sơ đối tác lưu địa chỉ và tọa độ đã chọn. Admin kiểm
 - `GET /api/market/prices?fruitSlug=tao`
 - `GET /api/trace/{batchCode}`
 - `POST /api/orders`, `GET /api/orders/mine`, `GET /api/orders/{id}`, `POST /api/orders/{id}/confirm-received`
+- `GET /api/shipping/ghn/provinces`, `GET /api/shipping/ghn/wards?provinceId=...`, `POST /api/shipping/ghn/quote`, `POST /api/shipping/ghn/webhook`
 - `GET /api/shops/{shopId}/reviews`, `POST /api/reviews`
 - `GET /api/articles`, `GET /api/articles/{slug}`; quản lý nội dung bằng giao diện Admin > Bài viết hoặc API `/api/admin/articles` (chỉ ADMIN).
 - `/api/admin/users`, `/api/admin/shops`, `/api/admin/products`, `/api/admin/orders`, `/api/admin/reviews`, `/api/admin/scans`, `/api/admin/nutrition`, `/api/admin/traceability`, `/api/admin/overview`
@@ -68,7 +84,7 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Không có tài khoản, shop, sản phẩm, bài viết, đánh giá, lượt quét hay hồ sơ truy xuất mẫu trong cơ sở dữ liệu sau khi migration V4 chạy. Trái cây dùng làm danh mục tra cứu; dữ liệu dinh dưỡng được để trống cho tới khi có nguồn thật.
 - Giá Bách Hóa Xanh và WinMart chỉ xuất hiện sau khi crawler đọc được giá từ các trang đã cấu hình. Backend lưu thời điểm, URL nguồn và lỗi crawl; khi crawl thất bại API không tạo giá thay thế.
 - `AI_SERVICE_URL` trống thì quét ảnh trả lỗi “chưa cấu hình dịch vụ phân tích ảnh”. Khi kết nối, endpoint AI nhận `multipart/form-data` field `file` và cần trả JSON gồm `fruitName`, `qualityScore`, `freshnessScore`, `ripenessLabel`, `sweetnessLabel`, `useWithin`, `qualityWarning`, `suggestion`, `confidence`. Có thể dùng `AI_SERVICE_API_KEY` cho Bearer token.
-- Đơn đặt hàng giữ tồn kho ngay khi tạo; Business chuyển đơn đã xác nhận sang `IN_TRANSIT`, khách xác nhận nhận hàng để hoàn tất. Doanh thu chỉ ghi vào ví sau khi đơn đã giao và khoản thanh toán đã đối soát; COD cần Admin xác nhận đã thu.
+- Đơn đặt hàng giữ tồn kho ngay khi tạo; phí GHN được báo giá ở checkout và Business tạo vận đơn trước khi đơn chuyển sang `IN_TRANSIT`. Khách xem mã vận đơn/trạng thái GHN và xác nhận đã nhận hàng để hoàn tất. Doanh thu chỉ ghi vào ví sau khi khách xác nhận nhận và khoản thanh toán đã được đối soát; COD được đối soát từ callback chuyển tiền của GHN.
 - Bản đồ dùng Leaflet để hiển thị bản đồ đường phố OpenStreetMap, vị trí người dùng và các cửa hàng đã tìm được quanh đó.
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
 
