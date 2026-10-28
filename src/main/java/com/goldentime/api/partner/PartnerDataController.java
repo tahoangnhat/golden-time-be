@@ -45,7 +45,9 @@ public class PartnerDataController {
                    p.product_category AS product_category,
                    (p.product_category = 'SEASONAL') AS is_seasonal,
                    (p.product_category = 'PREPARED') AS is_prepared,
-                   p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code, p.image_url
+                   p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code, p.image_url,
+                   p.product_origin, p.supplier_name, p.lot_code, p.traceability_proof,
+                   p.approval_status, p.review_note
             FROM shop_products p LEFT JOIN fruits f ON f.id = p.fruit_id
             """;
     private static final RowMapper<ShopProduct> SHOP_PRODUCT_MAPPER = (rs, row) -> new ShopProduct(
@@ -53,7 +55,9 @@ public class PartnerDataController {
             rs.getString("product_category"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"),
             rs.getString("display_name"), rs.getLong("price_per_kg"),
             rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
-            rs.getString("batch_code"), rs.getString("image_url"), List.of());
+            rs.getString("batch_code"), rs.getString("image_url"), rs.getString("product_origin"),
+            rs.getString("supplier_name"), rs.getString("lot_code"), rs.getString("traceability_proof"),
+            rs.getString("approval_status"), rs.getString("review_note"), List.of());
 
     private final JdbcTemplate jdbc;
     private final ArticleImageStorage imageStorage;
@@ -137,12 +141,15 @@ public class PartnerDataController {
         List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
         String imageUrl = imageUrls.get(0);
         long productId = jdbc.queryForObject("""
-                INSERT INTO shop_products (shop_id, fruit_id, product_category, is_seasonal, is_prepared, display_name, price_per_kg, stock_kg, status, image_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shop_products (shop_id, fruit_id, product_category, is_seasonal, is_prepared,
+                    display_name, price_per_kg, stock_kg, status, image_url, product_origin, supplier_name,
+                    lot_code, traceability_proof, approval_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'HIDDEN', ?, ?, ?, ?, ?, 'PENDING_REVIEW')
                 RETURNING id
                 """, Long.class, shopId, request.fruitId(), request.category(),
                 "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()), request.displayName().trim(), request.pricePerKg(),
-                request.stockKg(), productStatus(request.onSale(), request.stockKg()), imageUrl);
+                request.stockKg(), imageUrl, request.productOrigin().trim(), request.supplierName().trim(),
+                request.lotCode().trim(), request.traceabilityProof().trim());
         saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
     }
@@ -158,13 +165,35 @@ public class PartnerDataController {
         String imageUrl = imageUrls.get(0);
         int updated = jdbc.update("""
                 UPDATE shop_products
-                SET fruit_id = ?, product_category = ?, is_seasonal = ?, is_prepared = ?, display_name = ?, price_per_kg = ?, stock_kg = ?, status = ?, image_url = ?
+                SET fruit_id = ?, product_category = ?, is_seasonal = ?, is_prepared = ?, display_name = ?,
+                    price_per_kg = ?, stock_kg = ?, status = 'HIDDEN', image_url = ?, product_origin = ?,
+                    supplier_name = ?, lot_code = ?, traceability_proof = ?, approval_status = 'PENDING_REVIEW',
+                    review_note = NULL, reviewed_by = NULL, reviewed_at = NULL
                 WHERE id = ? AND shop_id = ?
                 """, request.fruitId(), request.category(), "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()),
-                request.displayName().trim(), request.pricePerKg(), request.stockKg(),
-                productStatus(request.onSale(), request.stockKg()), imageUrl, productId, shopId);
+                request.displayName().trim(), request.pricePerKg(), request.stockKg(), imageUrl,
+                request.productOrigin().trim(), request.supplierName().trim(), request.lotCode().trim(),
+                request.traceabilityProof().trim(), productId, shopId);
         if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         saveProductImages(productId, imageUrls);
+        return shopProduct(shopId, productId);
+    }
+
+    @PutMapping("/products/{productId}/visibility")
+    @Transactional
+    public ShopProduct updateProductVisibility(Authentication authentication, @PathVariable long productId,
+                                               @Valid @RequestBody ProductVisibilityUpdate request) {
+        long shopId = shopId(CurrentUser.id(authentication));
+        int updated = jdbc.update("""
+                UPDATE shop_products
+                SET status = CASE
+                    WHEN ? = FALSE THEN 'HIDDEN'
+                    WHEN stock_kg > 0 THEN 'ON_SALE'
+                    ELSE 'OUT_OF_STOCK'
+                END
+                WHERE id = ? AND shop_id = ? AND approval_status = 'APPROVED'
+                """, request.onSale(), productId, shopId);
+        if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Sản phẩm cần được admin duyệt trước khi bật bán.");
         return shopProduct(shopId, productId);
     }
 
@@ -222,11 +251,6 @@ public class PartnerDataController {
                 SHOP_PRODUCT_MAPPER, shopId, productId).stream().map(this::withProductImages).toList();
         if (products.isEmpty()) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         return products.get(0);
-    }
-
-    private static String productStatus(boolean onSale, BigDecimal stockKg) {
-        if (!onSale) return "HIDDEN";
-        return stockKg.signum() > 0 ? "ON_SALE" : "OUT_OF_STOCK";
     }
 
     @PostMapping("/orders/{orderId}/ship")
@@ -387,16 +411,24 @@ public class PartnerDataController {
                                    @NotBlank @Size(max = 255) String displayName,
                                    @NotNull @Positive @Digits(integer = 12, fraction = 0) Long pricePerKg,
                                    @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
+                                   @NotBlank @Size(max = 512) String productOrigin,
+                                   @NotBlank @Size(max = 255) String supplierName,
+                                   @NotBlank @Size(max = 128) String lotCode,
+                                   @NotBlank @Size(max = 4000) String traceabilityProof,
                                    @NotNull Boolean onSale,
                                    @Size(max = 1024) String imageUrl,
                                    @Size(max = 10) List<@Size(max = 1024) String> imageUrls) {}
+    public record ProductVisibilityUpdate(@NotNull Boolean onSale) {}
     public record ShopProduct(long id, Long fruitId, String fruitName, String emoji, String category,
                               boolean seasonal, boolean prepared,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
-                              String status, String batchCode, String imageUrl, List<String> imageUrls) {
+                              String status, String batchCode, String imageUrl, String productOrigin,
+                              String supplierName, String lotCode, String traceabilityProof,
+                              String approvalStatus, String reviewNote, List<String> imageUrls) {
         ShopProduct withImageUrls(List<String> images) {
             return new ShopProduct(id, fruitId, fruitName, emoji, category, seasonal, prepared, displayName,
-                    pricePerKg, stockKg, aiScore, status, batchCode, imageUrl, images);
+                    pricePerKg, stockKg, aiScore, status, batchCode, imageUrl, productOrigin, supplierName,
+                    lotCode, traceabilityProof, approvalStatus, reviewNote, images);
         }
     }
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}

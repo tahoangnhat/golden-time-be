@@ -54,13 +54,16 @@ public class AdminDataController {
     public List<ProductRow> products() {
         return jdbc.query("""
                 SELECT p.id, COALESCE(f.emoji, '🍎') AS emoji, p.display_name, s.name AS shop_name, p.price_per_kg, p.stock_kg,
-                       p.ai_score, p.status, p.product_category AS category
+                       p.ai_score, p.status, p.product_category AS category, p.approval_status, p.product_origin,
+                       p.supplier_name, p.lot_code, p.traceability_proof, p.review_note
                 FROM shop_products p JOIN shops s ON s.id = p.shop_id LEFT JOIN fruits f ON f.id = p.fruit_id
                 ORDER BY p.created_at DESC, p.id DESC
                 """, (rs, row) -> new ProductRow(rs.getLong("id"), rs.getString("emoji"),
                 rs.getString("display_name"), rs.getString("shop_name"), rs.getLong("price_per_kg"),
                 rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
-                rs.getString("category")));
+                rs.getString("category"), rs.getString("approval_status"), rs.getString("product_origin"),
+                rs.getString("supplier_name"), rs.getString("lot_code"), rs.getString("traceability_proof"),
+                rs.getString("review_note")));
     }
 
     @GetMapping("/orders")
@@ -196,7 +199,9 @@ public class AdminDataController {
     public record ShopRow(long id, String name, String address, double latitude, double longitude, String status,
                           BigDecimal rating, int reviewCount, String owner, int products, long orderValue) {}
     public record ProductRow(long id, String emoji, String name, String shop, long price, BigDecimal stock,
-                             Integer score, String status, String category) {}
+                             Integer score, String status, String category, String approvalStatus,
+                             String productOrigin, String supplierName, String lotCode,
+                             String traceabilityProof, String reviewNote) {}
     public record OrderRow(long id, String customer, String shop, long total, long subtotal, long shippingFee,
                            String status, String payment, String paymentStatus, String note, String deliveryName, String deliveryPhone,
                            String deliveryAddress, Instant createdAt, int itemCount) {}
