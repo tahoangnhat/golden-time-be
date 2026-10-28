@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -45,6 +46,28 @@ public class WalletController {
         return wallet.transactions(shopId(CurrentUser.id(authentication)));
     }
 
+    @GetMapping("/shop/wallet/withdrawal-requests")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public List<WalletService.ShopWithdrawalRequestView> shopWithdrawalRequests(Authentication authentication) {
+        return wallet.shopWithdrawalRequests(shopId(CurrentUser.id(authentication)));
+    }
+
+    @PostMapping("/shop/wallet/withdrawal-requests")
+    @ResponseStatus(HttpStatus.CREATED)
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public WalletService.ShopWithdrawalRequestView createWithdrawalRequest(
+            @Valid @RequestBody WithdrawalRequest request, Authentication authentication) {
+        return wallet.createWithdrawalRequest(shopId(CurrentUser.id(authentication)), CurrentUser.id(authentication),
+                request.amount(), request.bankCode(), request.bankName(), request.accountNumber(), request.accountName());
+    }
+
+    @PostMapping("/shop/wallet/withdrawal-requests/{requestId}/cancel")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public WalletService.ShopWithdrawalRequestView cancelWithdrawalRequest(@PathVariable long requestId,
+                                                                           Authentication authentication) {
+        return wallet.cancelWithdrawalRequest(shopId(CurrentUser.id(authentication)), requestId);
+    }
+
     @GetMapping("/admin/wallets")
     @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
     public List<WalletService.WalletSummary> adminWallets() {
@@ -64,12 +87,34 @@ public class WalletController {
         wallet.updateCommission(shopId, request.tier(), request.customRate());
     }
 
-    @PostMapping("/admin/wallets/{shopId}/payouts")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @GetMapping("/admin/wallet-withdrawal-requests")
     @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
-    public void payout(@PathVariable long shopId, @Valid @RequestBody PayoutRequest request,
-                       Authentication authentication) {
-        wallet.recordPayout(shopId, request.amount(), request.reference(), request.note(), CurrentUser.id(authentication));
+    public List<WalletService.AdminWithdrawalRequestView> adminWithdrawalRequests(
+            @RequestParam(required = false) String status) {
+        return wallet.adminWithdrawalRequests(status);
+    }
+
+    @PostMapping("/admin/wallet-withdrawal-requests/{requestId}/approve")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public WalletService.AdminWithdrawalRequestView approveWithdrawalRequest(@PathVariable long requestId,
+                                                                               Authentication authentication) {
+        return wallet.approveWithdrawalRequest(requestId, CurrentUser.id(authentication));
+    }
+
+    @PostMapping("/admin/wallet-withdrawal-requests/{requestId}/reject")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public WalletService.AdminWithdrawalRequestView rejectWithdrawalRequest(@PathVariable long requestId,
+                                                                              @Valid @RequestBody WithdrawalRejection request,
+                                                                              Authentication authentication) {
+        return wallet.rejectWithdrawalRequest(requestId, CurrentUser.id(authentication), request.reason());
+    }
+
+    @PostMapping("/admin/wallet-withdrawal-requests/{requestId}/mark-paid")
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public WalletService.AdminWithdrawalRequestView markWithdrawalPaid(@PathVariable long requestId,
+                                                                         @Valid @RequestBody WithdrawalPaid request,
+                                                                         Authentication authentication) {
+        return wallet.markWithdrawalPaid(requestId, CurrentUser.id(authentication), request.reference(), request.note());
     }
 
     @PostMapping("/admin/wallets/orders/{orderId}/collect-cod")
@@ -90,7 +135,12 @@ public class WalletController {
     }
 
     public record CommissionRequest(@NotBlank @Size(max = 24) String tier, BigDecimal customRate) {}
-    public record PayoutRequest(@NotNull @Positive Long amount, @Size(max = 255) String reference,
-                                @Size(max = 1000) String note) {}
+    public record WithdrawalRequest(@NotNull @Positive Long amount,
+                                    @NotBlank @Size(max = 32) String bankCode,
+                                    @NotBlank @Size(max = 120) String bankName,
+                                    @NotBlank @Size(max = 64) String accountNumber,
+                                    @NotBlank @Size(max = 120) String accountName) {}
+    public record WithdrawalRejection(@NotBlank @Size(max = 1000) String reason) {}
+    public record WithdrawalPaid(@NotBlank @Size(max = 255) String reference, @Size(max = 1000) String note) {}
     public record CodCollectionRequest(@Size(max = 255) String reference) {}
 }

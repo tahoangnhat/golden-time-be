@@ -61,6 +61,8 @@ app:
       refresh-token: ${GMAIL_OAUTH_REFRESH_TOKEN:}
   business:
     portal-url: ${BUSINESS_PORTAL_URL:http://localhost:8080/business/login}
+  wallet:
+    account-encryption-key: ${WALLET_ACCOUNT_ENCRYPTION_KEY:}
   payment:
     frontend-url: ${FRONTEND_BASE_URL:http://localhost:8080}
     payos:

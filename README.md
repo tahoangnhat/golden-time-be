@@ -95,3 +95,9 @@ Logo Business và ảnh Farm dùng cùng cấu hình Cloudinary, nằm trong cá
 Admin có thể tạo bản nháp, sửa, xuất bản/gỡ bài, đánh dấu nổi bật, thêm ảnh bìa và ảnh nội dung, định dạng tiêu đề, danh sách, liên kết, cỡ/phông/màu chữ, cùng mô tả SEO. Nội dung rich text được làm sạch theo danh sách thẻ và thuộc tính cho phép trước khi lưu và trả về công khai.
 
 Giấy phép kinh doanh tối đa 10 MB, nhận PDF/PNG/JPG và được lưu riêng trong `PRIVATE_UPLOAD_DIR`; tệp chỉ được Admin tải qua API có xác thực. Kết quả duyệt hoặc từ chối chỉ hoàn tất khi SMTP gửi được email. Cấu hình `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` và `MAIL_FROM` trước khi Admin xử lý hồ sơ; đặt `BUSINESS_PORTAL_URL` thành địa chỉ đăng nhập doanh nghiệp thực tế khi triển khai. Mật khẩu đăng ký được băm và chỉ dùng để tạo tài khoản doanh nghiệp sau khi chấp nhận hồ sơ.
+
+## Rút tiền ví Shop
+
+Business gửi yêu cầu rút với số tiền và tài khoản ngân hàng nhận. Số tiền được giữ khỏi số dư khả dụng khi yêu cầu ở trạng thái `PENDING` hoặc `APPROVED`; Admin duyệt/từ chối. Với MVP chuyển khoản thủ công, Admin chỉ bấm **Xác nhận đã chuyển** sau khi giao dịch ngân hàng thành công và nhập mã tham chiếu. Lúc đó backend mới ghi khoản `PAYOUT` vào sổ ví. Số tài khoản và tên chủ tài khoản được mã hóa AES-GCM trong cơ sở dữ liệu; Business chỉ thấy số tài khoản đã che, Admin mới xem được số đầy đủ.
+
+Trước khi dùng tính năng này, tạo khóa AES 32 byte và đặt cùng một giá trị `WALLET_ACCOUNT_ENCRYPTION_KEY` trong môi trường local/Render. Ví dụ PowerShell để tạo khóa một lần: `$env:WALLET_ACCOUNT_ENCRYPTION_KEY = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))`. Lưu giá trị vào nơi quản lý secrets và giữ nguyên lâu dài; thay khóa khi đã có yêu cầu rút sẽ khiến thông tin ngân hàng cũ không thể giải mã.

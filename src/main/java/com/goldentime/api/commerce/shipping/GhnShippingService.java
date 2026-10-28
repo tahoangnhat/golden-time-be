@@ -36,7 +36,7 @@ public class GhnShippingService {
     private final int widthCm;
     private final int heightCm;
     private final int packagingWeightGrams;
-    private final ConcurrentMap<Integer, List<GhnAddress>> wardCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<Long, List<GhnAddress>> wardCache = new ConcurrentHashMap<>();
     private volatile List<GhnAddress> provinceCache;
 
     public GhnShippingService(JdbcTemplate jdbc, WalletService wallet,
@@ -84,7 +84,7 @@ public class GhnShippingService {
         return result;
     }
 
-    public List<GhnAddress> wards(int provinceId) {
+    public List<GhnAddress> wards(long provinceId) {
         requireConfigured();
         if (provinceId <= 0 || provinces().stream().noneMatch(item -> item.id() == provinceId)) {
             throw ApiException.badRequest("Tỉnh/thành GHN không hợp lệ.");
@@ -413,6 +413,7 @@ public class GhnShippingService {
             String pickupWard, String pickupPhone) {}
     private record ShippingParty(String name, String phone, String address, String province, String ward) {}
     private record ShipmentSize(int weightGrams) {}
+    private record CodOrder(long id, long shopId, String paymentReference) {}
 
     public record ShippingItem(String name, BigDecimal quantityKg, long lineTotal) {}
     public record GhnAddress(long id, String name) {}
