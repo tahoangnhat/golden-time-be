@@ -67,7 +67,7 @@ public class AdminDataController {
     public List<OrderRow> orders() {
         return jdbc.query("""
                 SELECT o.id, u.full_name AS customer_name, s.name AS shop_name, o.total_amount,
-                       o.subtotal_amount, o.shipping_fee, o.status, o.payment_method, o.note,
+                       o.subtotal_amount, o.shipping_fee, o.status, o.payment_method, o.payment_status, o.note,
                        o.delivery_name, o.delivery_phone, o.delivery_address, o.created_at,
                        COUNT(oi.id) AS item_count
                 FROM orders o JOIN users u ON u.id = o.user_id JOIN shops s ON s.id = o.shop_id
@@ -76,7 +76,7 @@ public class AdminDataController {
                 ORDER BY o.created_at DESC, o.id DESC
                 """, (rs, row) -> new OrderRow(rs.getLong("id"), rs.getString("customer_name"), rs.getString("shop_name"),
                 rs.getLong("total_amount"), rs.getLong("subtotal_amount"), rs.getLong("shipping_fee"),
-                rs.getString("status"), rs.getString("payment_method"), rs.getString("note"),
+                rs.getString("status"), rs.getString("payment_method"), rs.getString("payment_status"), rs.getString("note"),
                 rs.getString("delivery_name"), rs.getString("delivery_phone"), rs.getString("delivery_address"),
                 rs.getTimestamp("created_at").toInstant(), rs.getInt("item_count")));
     }
@@ -198,7 +198,7 @@ public class AdminDataController {
     public record ProductRow(long id, String emoji, String name, String shop, long price, BigDecimal stock,
                              Integer score, String status, String category) {}
     public record OrderRow(long id, String customer, String shop, long total, long subtotal, long shippingFee,
-                           String status, String payment, String note, String deliveryName, String deliveryPhone,
+                           String status, String payment, String paymentStatus, String note, String deliveryName, String deliveryPhone,
                            String deliveryAddress, Instant createdAt, int itemCount) {}
     public record ReviewRow(long id, String user, String shop, int rating, String comment, Instant createdAt,
                             boolean purchased) {}

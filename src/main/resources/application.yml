@@ -61,6 +61,14 @@ app:
       refresh-token: ${GMAIL_OAUTH_REFRESH_TOKEN:}
   business:
     portal-url: ${BUSINESS_PORTAL_URL:http://localhost:8080/business/login}
+  payment:
+    frontend-url: ${FRONTEND_BASE_URL:http://localhost:8080}
+    payos:
+      api-url: ${PAYOS_API_URL:https://api-merchant.payos.vn}
+      webhook-base-url: ${PAYOS_WEBHOOK_BASE_URL:https://golden-time-be.onrender.com/api/payments/payos/webhook}
+      encryption-key: ${PAYOS_CREDENTIAL_ENCRYPTION_KEY:}
+      link-expiry-minutes: ${PAYOS_LINK_EXPIRY_MINUTES:15}
+      expiry-scan-ms: ${PAYOS_EXPIRY_SCAN_MS:60000}
   bootstrap:
     admin-email: ${ADMIN_BOOTSTRAP_EMAIL:}
     admin-password: ${ADMIN_BOOTSTRAP_PASSWORD:}

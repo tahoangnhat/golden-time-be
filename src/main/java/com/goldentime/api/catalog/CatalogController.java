@@ -74,6 +74,20 @@ public class CatalogController {
         return shops.stream().filter(shop -> shop.distanceKm() <= Math.max(0, radiusKm)).toList();
     }
 
+    @GetMapping("/api/shops/{shopId}/payment-methods")
+    public ShopPaymentMethods paymentMethods(@PathVariable long shopId) {
+        List<Boolean> enabled = jdbc.query("""
+                SELECT s.status = 'ACTIVE'
+                   AND s.payos_client_id_encrypted IS NOT NULL
+                   AND s.payos_api_key_encrypted IS NOT NULL
+                   AND s.payos_checksum_key_encrypted IS NOT NULL
+                   AND s.payos_webhook_verified_at IS NOT NULL
+                FROM shops s WHERE s.id = ?
+                """, (rs, row) -> rs.getBoolean(1), shopId);
+        if (enabled.isEmpty()) throw ApiException.notFound("Không tìm thấy cửa hàng.");
+        return new ShopPaymentMethods(true, enabled.get(0));
+    }
+
     @GetMapping("/api/products")
     public List<ProductCard> products(
             @RequestParam(required = false) String q,
@@ -173,6 +187,7 @@ public class CatalogController {
     public record ShopSummary(long id, String name, String address, double latitude, double longitude,
                               BigDecimal rating, int reviewCount, String description, String popularFruit,
                               int productCount, Double distanceKm) {}
+    public record ShopPaymentMethods(boolean codEnabled, boolean payosEnabled) {}
     public record ProductCard(long id, long shopId, String shopName, Long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,

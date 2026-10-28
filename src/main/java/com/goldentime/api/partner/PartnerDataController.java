@@ -228,13 +228,13 @@ public class PartnerDataController {
         long shopId = shopId(CurrentUser.id(authentication));
         List<ShopOrder> orders = jdbc.query("""
                 SELECT o.id, o.user_id, u.full_name AS customer, o.total_amount, o.subtotal_amount,
-                       o.shipping_fee, o.status, o.payment_method, o.delivery_name, o.delivery_phone,
+                       o.shipping_fee, o.status, o.payment_method, o.payment_status, o.delivery_name, o.delivery_phone,
                        o.delivery_address, o.note, o.created_at
                 FROM orders o JOIN users u ON u.id = o.user_id
                 WHERE o.shop_id = ? ORDER BY o.created_at DESC, o.id DESC
                 """, (rs, row) -> new ShopOrder(rs.getLong("id"), rs.getString("customer"),
                 rs.getLong("total_amount"), rs.getLong("subtotal_amount"), rs.getLong("shipping_fee"),
-                rs.getString("status"), rs.getString("payment_method"), rs.getString("delivery_name"),
+                rs.getString("status"), rs.getString("payment_method"), rs.getString("payment_status"), rs.getString("delivery_name"),
                 rs.getString("delivery_phone"), rs.getString("delivery_address"), rs.getString("note"),
                 rs.getTimestamp("created_at").toInstant(), List.of()), shopId);
         return orders.stream().map(order -> order.withItems(jdbc.query("""
@@ -363,10 +363,10 @@ public class PartnerDataController {
     }
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
     public record ShopOrder(long id, String customer, long total, long subtotal, long shippingFee, String status,
-                            String payment, String deliveryName, String deliveryPhone, String deliveryAddress,
+                            String payment, String paymentStatus, String deliveryName, String deliveryPhone, String deliveryAddress,
                             String note, Instant createdAt, List<ShopOrderItem> items) {
         ShopOrder withItems(List<ShopOrderItem> orderItems) {
-            return new ShopOrder(id, customer, total, subtotal, shippingFee, status, payment, deliveryName,
+            return new ShopOrder(id, customer, total, subtotal, shippingFee, status, payment, paymentStatus, deliveryName,
                     deliveryPhone, deliveryAddress, note, createdAt, orderItems);
         }
     }
