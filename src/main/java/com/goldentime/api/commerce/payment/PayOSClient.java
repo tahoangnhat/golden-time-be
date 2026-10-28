@@ -22,16 +22,29 @@ import java.util.TreeMap;
 public class PayOSClient {
     private final RestClient client;
     private final ObjectMapper mapper;
+    private final String clientId;
+    private final String apiKey;
+    private final String checksumKey;
 
     public PayOSClient(RestClient.Builder builder, ObjectMapper mapper,
-                       @Value("${app.payment.payos.api-url:https://api-merchant.payos.vn}") String apiUrl) {
+                       @Value("${app.payment.payos.api-url:https://api-merchant.payos.vn}") String apiUrl,
+                       @Value("${app.payment.payos.client-id:}") String clientId,
+                       @Value("${app.payment.payos.api-key:}") String apiKey,
+                       @Value("${app.payment.payos.checksum-key:}") String checksumKey) {
         this.client = builder.baseUrl(apiUrl).build();
         this.mapper = mapper;
+        this.clientId = clientId;
+        this.apiKey = apiKey;
+        this.checksumKey = checksumKey;
     }
 
-    public PaymentLink createPaymentLink(Credentials credentials, long orderCode, long amount, String description,
+    public boolean isConfigured() {
+        return hasValue(clientId) && hasValue(apiKey) && hasValue(checksumKey);
+    }
+
+    public PaymentLink createPaymentLink(long orderCode, long amount, String description,
                                          String cancelUrl, String returnUrl, long expiresAt) {
-        requireConfigured(credentials);
+        requireConfigured();
         Map<String, Object> signedFields = new TreeMap<>();
         signedFields.put("amount", amount);
         signedFields.put("cancelUrl", cancelUrl);
@@ -41,8 +54,8 @@ public class PayOSClient {
 
         Map<String, Object> request = new TreeMap<>(signedFields);
         request.put("expiredAt", expiresAt);
-        request.put("signature", signPaymentRequest(credentials, signedFields));
-        JsonNode data = post(credentials, "/v2/payment-requests", request);
+        request.put("signature", signPaymentRequest(signedFields));
+        JsonNode data = post("/v2/payment-requests", request);
         if (data.path("orderCode").asLong(-1) != orderCode || data.path("amount").asLong(-1) != amount) {
             throw ApiException.unavailable("PayOS trả về thông tin thanh toán không khớp với đơn hàng.");
         }
@@ -54,36 +67,33 @@ public class PayOSClient {
         return new PaymentLink(paymentLinkId, checkoutUrl, data.path("qrCode").asText(null));
     }
 
-    public PaymentLinkStatus getPaymentLinkStatus(Credentials credentials, long orderCode) {
-        requireConfigured(credentials);
-        JsonNode data = get(credentials, "/v2/payment-requests/" + orderCode);
+    public PaymentLinkStatus getPaymentLinkStatus(long orderCode) {
+        requireConfigured();
+        JsonNode data = get("/v2/payment-requests/" + orderCode);
         return new PaymentLinkStatus(data.path("status").asText(""), data.path("amountPaid").asLong(0));
     }
 
-    public PaymentLinkStatus cancelPaymentLink(Credentials credentials, long orderCode, String reason) {
-        requireConfigured(credentials);
-        JsonNode response = post(credentials, "/v2/payment-requests/" + orderCode + "/cancel", Map.of("cancellationReason", reason));
+    public PaymentLinkStatus cancelPaymentLink(long orderCode, String reason) {
+        requireConfigured();
+        JsonNode response = post("/v2/payment-requests/" + orderCode + "/cancel", Map.of("cancellationReason", reason));
         return new PaymentLinkStatus(response.path("status").asText(""), response.path("amountPaid").asLong(0));
     }
 
-    public void confirmWebhook(Credentials credentials, String webhookUrl) {
-        requireConfigured(credentials);
-        JsonNode data = post(credentials, "/confirm-webhook", Map.of("webhookUrl", webhookUrl));
-        if (!webhookUrl.equals(data.path("webhookUrl").asText())) {
-            throw ApiException.unavailable("PayOS chưa xác nhận địa chỉ webhook cho cửa hàng.");
-        }
+    public void confirmWebhook(String webhookUrl) {
+        requireConfigured();
+        post("/confirm-webhook", Map.of("webhookUrl", webhookUrl));
     }
 
-    public boolean verifyWebhook(Credentials credentials, JsonNode payload) {
-        if (!isConfigured(credentials) || payload == null || !payload.hasNonNull("data") || !payload.hasNonNull("signature")) return false;
-        return verifyDataSignature(credentials, payload.path("data"), payload.path("signature").asText());
+    public boolean verifyWebhook(JsonNode payload) {
+        if (!isConfigured() || payload == null || !payload.hasNonNull("data") || !payload.hasNonNull("signature")) return false;
+        return verifyDataSignature(payload.path("data"), payload.path("signature").asText());
     }
 
-    private JsonNode get(Credentials credentials, String path) {
+    private JsonNode get(String path) {
         try {
             JsonNode response = client.get().uri(path)
-                    .header("x-client-id", credentials.clientId())
-                    .header("x-api-key", credentials.apiKey())
+                    .header("x-client-id", clientId)
+                    .header("x-api-key", apiKey)
                     .retrieve().body(JsonNode.class);
             return responseData(response);
         } catch (RestClientException exception) {
@@ -91,11 +101,11 @@ public class PayOSClient {
         }
     }
 
-    private JsonNode post(Credentials credentials, String path, Map<String, Object> body) {
+    private JsonNode post(String path, Map<String, Object> body) {
         try {
             JsonNode response = client.post().uri(path)
-                    .header("x-client-id", credentials.clientId())
-                    .header("x-api-key", credentials.apiKey())
+                    .header("x-client-id", clientId)
+                    .header("x-api-key", apiKey)
                     .body(body)
                     .retrieve().body(JsonNode.class);
             return responseData(response);
@@ -111,21 +121,21 @@ public class PayOSClient {
         return response.path("data");
     }
 
-    private String signPaymentRequest(Credentials credentials, Map<String, Object> fields) {
+    private String signPaymentRequest(Map<String, Object> fields) {
         String canonical = fields.entrySet().stream()
                 .map(entry -> entry.getKey() + "=" + entry.getValue())
                 .reduce((left, right) -> left + "&" + right).orElse("");
-        return hmac(credentials, canonical);
+        return hmac(canonical);
     }
 
-    private boolean verifyDataSignature(Credentials credentials, JsonNode data, String receivedSignature) {
+    private boolean verifyDataSignature(JsonNode data, String receivedSignature) {
         if (receivedSignature == null || receivedSignature.isBlank() || data == null || !data.isObject()) return false;
         TreeMap<String, JsonNode> fields = new TreeMap<>();
         data.fields().forEachRemaining(entry -> fields.put(entry.getKey(), entry.getValue()));
         String canonical = fields.entrySet().stream()
                 .map(entry -> entry.getKey() + "=" + signatureValue(entry.getValue()))
                 .reduce((left, right) -> left + "&" + right).orElse("");
-        byte[] expected = hmac(credentials, canonical).getBytes(StandardCharsets.US_ASCII);
+        byte[] expected = hmac(canonical).getBytes(StandardCharsets.US_ASCII);
         byte[] received = receivedSignature.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII);
         return MessageDigest.isEqual(expected, received);
     }
@@ -158,29 +168,24 @@ public class PayOSClient {
         return value;
     }
 
-    private String hmac(Credentials credentials, String value) {
+    private String hmac(String value) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(credentials.checksumKey().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.init(new SecretKeySpec(checksumKey.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return HexFormat.of().formatHex(mac.doFinal(value.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception exception) {
             throw new IllegalStateException("Không thể tạo chữ ký PayOS.", exception);
         }
     }
 
-    public static boolean isConfigured(Credentials credentials) {
-        return credentials != null && hasValue(credentials.clientId()) && hasValue(credentials.apiKey()) && hasValue(credentials.checksumKey());
-    }
-
-    private static boolean hasValue(String value) {
+    private boolean hasValue(String value) {
         return value != null && !value.isBlank();
     }
 
-    private void requireConfigured(Credentials credentials) {
-        if (!isConfigured(credentials)) throw ApiException.unavailable("Cửa hàng chưa kết nối kênh PayOS.");
+    private void requireConfigured() {
+        if (!isConfigured()) throw ApiException.unavailable("Chưa cấu hình PayOS trên sàn.");
     }
 
-    public record Credentials(String clientId, String apiKey, String checksumKey) {}
     public record PaymentLink(String paymentLinkId, String checkoutUrl, String qrCode) {}
     public record PaymentLinkStatus(String status, long amountPaid) {}
 }

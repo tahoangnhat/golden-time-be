@@ -97,7 +97,7 @@ public class OrderController {
             String cancelUrl = baseUrl + "/cart";
             String encodedOrder = Long.toString(orderId, 36).toUpperCase(Locale.ROOT);
             String description = "G" + encodedOrder.substring(Math.max(0, encodedOrder.length() - 8));
-            var link = payments.createPaymentLink(shopId, orderId, total, description,
+            var link = payments.createPaymentLink(orderId, total, description,
                     cancelUrl, returnUrl, expiresAt.getEpochSecond());
             jdbc.update("""
                     UPDATE orders SET payos_payment_link_id = ?, payos_checkout_url = ?, payos_qr_code = ?,

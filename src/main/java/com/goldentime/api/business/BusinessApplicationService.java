@@ -135,10 +135,11 @@ public class BusinessApplicationService {
             Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, application.email());
             if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã được dùng cho một tài khoản khác.");
             shopId = jdbc.queryForObject("""
-                    INSERT INTO shops (name, address, latitude, longitude, google_place_id, status,
+                    INSERT INTO shops (name, address, latitude, longitude, google_place_id, status, approved_at,
+                                       commission_tier,
                                        business_email, business_phone, tax_code, representative_name,
                                        representative_phone, logo_url)
-                    VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?) RETURNING id
+                    VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), 'NEW_SHOP', ?, ?, ?, ?, ?, ?) RETURNING id
                     """, Long.class, application.businessName(), normalizedAddress, resolvedLatitude,
                     resolvedLongitude, resolvedPlaceId, application.email(), application.phone(), application.taxCode(),
                     application.contactName(), application.representativePhone(), application.logoUrl());

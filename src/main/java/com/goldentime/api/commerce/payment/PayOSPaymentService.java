@@ -17,26 +17,24 @@ public class PayOSPaymentService {
     private static final Logger log = LoggerFactory.getLogger(PayOSPaymentService.class);
     private final JdbcTemplate jdbc;
     private final PayOSClient payOS;
-    private final PayOSCredentialService credentials;
+    private final WalletService wallet;
     private final TransactionTemplate transactions;
 
-    public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS, PayOSCredentialService credentials,
+    public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS, WalletService wallet,
                                org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.jdbc = jdbc;
         this.payOS = payOS;
-        this.credentials = credentials;
+        this.wallet = wallet;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    public PayOSClient.PaymentLink createPaymentLink(long shopId, long orderCode, long amount, String description,
+    public PayOSClient.PaymentLink createPaymentLink(long orderCode, long amount, String description,
                                                        String cancelUrl, String returnUrl, long expiresAt) {
-        return payOS.createPaymentLink(credentials.requireConnected(shopId), orderCode, amount, description,
-                cancelUrl, returnUrl, expiresAt);
+        return payOS.createPaymentLink(orderCode, amount, description, cancelUrl, returnUrl, expiresAt);
     }
 
-    public boolean receiveWebhook(long shopId, JsonNode payload) {
-        PayOSClient.Credentials channel = credentials.forWebhook(shopId);
-        if (channel == null || !payOS.verifyWebhook(channel, payload)) return false;
+    public boolean receiveWebhook(JsonNode payload) {
+        if (!payOS.verifyWebhook(payload)) return false;
         JsonNode data = payload.path("data");
         if (!payload.path("success").asBoolean(false)
                 || !"00".equals(payload.path("code").asText())
@@ -45,8 +43,9 @@ public class PayOSPaymentService {
         long orderCode = data.path("orderCode").asLong(-1);
         long amount = data.path("amount").asLong(-1);
         if (orderCode <= 0 || amount < 0) return true;
-        Integer belongsToShop = jdbc.queryForObject("SELECT COUNT(*) FROM orders WHERE id = ? AND shop_id = ?", Integer.class, orderCode, shopId);
-        if (belongsToShop == null || belongsToShop == 0) return true;
+        List<Long> shopIds = jdbc.query("SELECT shop_id FROM orders WHERE id = ? AND payment_method = 'PAYOS'", (rs, row) -> rs.getLong(1), orderCode);
+        if (shopIds.isEmpty()) return true;
+        long shopId = shopIds.get(0);
         if (!markPaid(orderCode, shopId, amount, data.path("reference").asText(null), data.path("paymentLinkId").asText(null))) {
             log.warn("Bỏ qua webhook PayOS không khớp mã đơn hoặc tổng tiền (orderCode={}).", orderCode);
         }
@@ -59,8 +58,7 @@ public class PayOSPaymentService {
             throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng không còn chờ thanh toán PayOS.");
         }
 
-        PayOSClient.Credentials channel = credentials.requireConnected(order.shopId());
-        PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(channel, orderId);
+        PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(orderId);
         if (isPaid(remote, order.totalAmount())) {
             markPaid(orderId, order.shopId(), remote.amountPaid(), null, null);
             throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng đã được thanh toán.");
@@ -69,7 +67,7 @@ public class PayOSPaymentService {
             throw new ApiException(HttpStatus.CONFLICT, "PayOS đang đối soát giao dịch. Vui lòng thử lại sau.");
         }
         if ("PENDING".equals(remote.status())) {
-            remote = payOS.cancelPaymentLink(channel, orderId, "Customer cancelled the order");
+            remote = payOS.cancelPaymentLink(orderId, "Customer cancelled the order");
         }
         if (isPaid(remote, order.totalAmount())) {
             markPaid(orderId, order.shopId(), remote.amountPaid(), null, null);
@@ -86,6 +84,7 @@ public class PayOSPaymentService {
 
     @Scheduled(fixedDelayString = "${app.payment.payos.expiry-scan-ms:60000}")
     public void cancelExpiredPendingOrders() {
+        if (!payOS.isConfigured()) return;
         List<PaymentOrder> expired = jdbc.query("""
                 SELECT id, shop_id, total_amount, payment_method, payment_status
                 FROM orders
@@ -98,15 +97,14 @@ public class PayOSPaymentService {
 
         for (PaymentOrder order : expired) {
             try {
-                PayOSClient.Credentials channel = credentials.requireConnected(order.shopId());
-                PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(channel, order.id());
+                PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(order.id());
                 if (isPaid(remote, order.totalAmount())) {
                     markPaid(order.id(), order.shopId(), remote.amountPaid(), null, null);
                 } else if (remote.amountPaid() > 0) {
                     log.warn("PayOS đã nhận một phần tiền cho đơn hàng {}; giữ nguyên đơn để đối soát.", order.id());
                 } else {
                     if ("PENDING".equals(remote.status())) {
-                        remote = payOS.cancelPaymentLink(channel, order.id(), "Payment link expired");
+                        remote = payOS.cancelPaymentLink(order.id(), "Payment link expired");
                     }
                     if (isPaid(remote, order.totalAmount())) markPaid(order.id(), order.shopId(), remote.amountPaid(), null, null);
                     else if (remote.amountPaid() > 0) log.warn("PayOS đã nhận một phần tiền cho đơn hàng {}; giữ nguyên đơn để đối soát.", order.id());
@@ -129,14 +127,18 @@ public class PayOSPaymentService {
     }
 
     private boolean markPaid(long orderId, long shopId, long amount, String reference, String paymentLinkId) {
-        Integer updated = transactions.execute(status -> jdbc.update("""
-                UPDATE orders
-                SET payment_status = 'PAID', paid_at = COALESCE(paid_at, NOW()),
-                    payos_reference = COALESCE(?, payos_reference),
-                    payos_payment_link_id = COALESCE(?, payos_payment_link_id)
-                WHERE id = ? AND shop_id = ? AND payment_method = 'PAYOS' AND payment_status = 'PENDING'
-                  AND total_amount = ?
-                """, reference, paymentLinkId, orderId, shopId, amount));
+        Integer updated = transactions.execute(status -> {
+            int count = jdbc.update("""
+                    UPDATE orders
+                    SET payment_status = 'PAID', paid_at = COALESCE(paid_at, NOW()),
+                        payos_reference = COALESCE(?, payos_reference),
+                        payos_payment_link_id = COALESCE(?, payos_payment_link_id)
+                    WHERE id = ? AND shop_id = ? AND payment_method = 'PAYOS' AND payment_status = 'PENDING'
+                      AND total_amount = ?
+                    """, reference, paymentLinkId, orderId, shopId, amount);
+            if (count == 1) wallet.recordPaidOrder(orderId, shopId, reference, null);
+            return count;
+        });
         if (updated == null || updated == 0) {
             Integer matching = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM orders WHERE id = ? AND shop_id = ? AND payment_method = 'PAYOS'
