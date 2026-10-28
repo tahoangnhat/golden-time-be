@@ -155,7 +155,7 @@ public class AdminDataController {
                        (SELECT COUNT(*) FROM orders) AS orders,
                        (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE created_at::date = CURRENT_DATE AND status <> 'CANCELLED') AS order_value_today,
                        (SELECT COUNT(*) FROM ai_scans WHERE created_at::date = CURRENT_DATE) AS scans_today,
-                       (SELECT COUNT(*) FROM orders WHERE status = 'CONFIRMED') AS confirmed_orders
+                       (SELECT COUNT(*) FROM orders WHERE status IN ('CONFIRMED', 'IN_TRANSIT', 'DELIVERED')) AS confirmed_orders
                 """, (rs, row) -> new Counts(rs.getLong("users"), rs.getLong("shops"), rs.getLong("orders"),
                 rs.getLong("order_value_today"), rs.getLong("scans_today"), rs.getLong("confirmed_orders")));
         List<DailyMetric> days = jdbc.query("""

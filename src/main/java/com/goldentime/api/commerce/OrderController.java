@@ -2,6 +2,7 @@ package com.goldentime.api.commerce;
 
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.commerce.payment.PayOSPaymentService;
+import com.goldentime.api.commerce.payment.WalletService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -34,14 +35,16 @@ public class OrderController {
     private static final long SHIPPING_FEE = 15000;
     private final JdbcTemplate jdbc;
     private final PayOSPaymentService payments;
+    private final WalletService wallet;
     private final String frontendUrl;
     private final int paymentLinkExpiryMinutes;
 
-    public OrderController(JdbcTemplate jdbc, PayOSPaymentService payments,
+    public OrderController(JdbcTemplate jdbc, PayOSPaymentService payments, WalletService wallet,
                            @Value("${app.payment.frontend-url:http://localhost:8080}") String frontendUrl,
                            @Value("${app.payment.payos.link-expiry-minutes:15}") int paymentLinkExpiryMinutes) {
         this.jdbc = jdbc;
         this.payments = payments;
+        this.wallet = wallet;
         this.frontendUrl = frontendUrl;
         this.paymentLinkExpiryMinutes = paymentLinkExpiryMinutes;
     }
@@ -128,6 +131,27 @@ public class OrderController {
         return detail(id, CurrentUser.id(authentication));
     }
 
+    @PostMapping("/{id}/confirm-received")
+    @Transactional
+    public ReceiptConfirmation confirmReceived(@PathVariable long id, Authentication authentication) {
+        long userId = CurrentUser.id(authentication);
+        List<ReceiptOrder> orders = jdbc.query("""
+                SELECT shop_id, status, payos_reference
+                FROM orders WHERE id = ? AND user_id = ? FOR UPDATE
+                """, (rs, row) -> new ReceiptOrder(rs.getLong("shop_id"), rs.getString("status"),
+                rs.getString("payos_reference")), id, userId);
+        if (orders.isEmpty()) throw ApiException.notFound("Không tìm thấy đơn hàng.");
+        ReceiptOrder order = orders.get(0);
+        if (!"IN_TRANSIT".equals(order.status())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Chỉ có thể xác nhận nhận hàng khi đơn đang giao.");
+        }
+        int updated = jdbc.update("UPDATE orders SET status = 'DELIVERED' WHERE id = ? AND user_id = ? AND status = 'IN_TRANSIT'",
+                id, userId);
+        if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
+        boolean walletCredited = wallet.recordPaidOrder(id, order.shopId(), order.paymentReference(), null);
+        return new ReceiptConfirmation(walletCredited);
+    }
+
     private OrderDetail detail(long orderId, long userId) {
         List<OrderHeader> headers = jdbc.query("""
                 SELECT o.id, o.shop_id, s.name AS shop_name, o.status, o.total_amount,
@@ -193,6 +217,7 @@ public class OrderController {
                                long subtotal, long shippingFee, String paymentMethod, String paymentStatus,
                                String checkoutUrl, String qrCode, Instant paymentExpiresAt, String note,
                                String deliveryName, String deliveryPhone, String deliveryAddress, Instant createdAt) {}
+    private record ReceiptOrder(long shopId, String status, String paymentReference) {}
 
     public record ItemRequest(@NotNull Long productId,
                               @NotNull @DecimalMin(value = "0.01") @Digits(integer = 7, fraction = 2) BigDecimal quantityKg) {}
@@ -211,4 +236,5 @@ public class OrderController {
                               Instant createdAt, List<OrderItem> items) {}
     public record OrderSummary(long id, long shopId, String shopName, String status, long total,
                                String paymentMethod, String paymentStatus, Instant createdAt, int itemCount) {}
+    public record ReceiptConfirmation(boolean walletCredited) {}
 }

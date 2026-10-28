@@ -223,6 +223,29 @@ public class PartnerDataController {
         return stockKg.signum() > 0 ? "ON_SALE" : "OUT_OF_STOCK";
     }
 
+    @PostMapping("/orders/{orderId}/ship")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void shipOrder(@PathVariable long orderId, Authentication authentication) {
+        long shopId = shopId(CurrentUser.id(authentication));
+        List<ShipmentOrder> orders = jdbc.query("""
+                SELECT status, payment_method, payment_status FROM orders
+                WHERE id = ? AND shop_id = ? FOR UPDATE
+                """, (rs, row) -> new ShipmentOrder(rs.getString("status"), rs.getString("payment_method"),
+                rs.getString("payment_status")), orderId, shopId);
+        if (orders.isEmpty()) throw ApiException.notFound("Không tìm thấy đơn hàng của cửa hàng.");
+        ShipmentOrder order = orders.get(0);
+        if (!("PENDING".equals(order.status()) || "CONFIRMED".equals(order.status()))) {
+            throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng không còn ở trạng thái chờ xác nhận.");
+        }
+        if ("PAYOS".equals(order.paymentMethod()) && !"PAID".equals(order.paymentStatus())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Đơn PayOS cần thanh toán thành công trước khi giao hàng.");
+        }
+        int updated = jdbc.update("UPDATE orders SET status = 'IN_TRANSIT' WHERE id = ? AND shop_id = ? AND status IN ('PENDING', 'CONFIRMED')",
+                orderId, shopId);
+        if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
+    }
+
     @GetMapping("/orders")
     public List<ShopOrder> orders(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
@@ -370,6 +393,7 @@ public class PartnerDataController {
                     deliveryPhone, deliveryAddress, note, createdAt, orderItems);
         }
     }
+    private record ShipmentOrder(String status, String paymentMethod, String paymentStatus) {}
     public record ShopReview(long id, String author, int rating, String comment, Instant createdAt, boolean purchased) {}
     public record ShopTrace(String batchCode, String product, String origin, String supplier, boolean certified,
                             LocalDate harvestDate, LocalDate intakeDate, String certificates,

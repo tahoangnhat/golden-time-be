@@ -48,13 +48,13 @@ Hồ sơ đối tác lưu địa chỉ và tọa độ đã chọn. Admin kiểm
 - `GET /api/fruits`, `GET /api/fruits/{slug}`, `GET /api/products`, `GET /api/shops`
 - `GET /api/market/prices?fruitSlug=tao`
 - `GET /api/trace/{batchCode}`
-- `POST /api/orders`, `GET /api/orders/mine`, `GET /api/orders/{id}`
+- `POST /api/orders`, `GET /api/orders/mine`, `GET /api/orders/{id}`, `POST /api/orders/{id}/confirm-received`
 - `GET /api/shops/{shopId}/reviews`, `POST /api/reviews`
 - `GET /api/articles`, `GET /api/articles/{slug}`; quản lý nội dung bằng giao diện Admin > Bài viết hoặc API `/api/admin/articles` (chỉ ADMIN).
 - `/api/admin/users`, `/api/admin/shops`, `/api/admin/products`, `/api/admin/orders`, `/api/admin/reviews`, `/api/admin/scans`, `/api/admin/nutrition`, `/api/admin/traceability`, `/api/admin/overview`
 - `POST /api/business/applications` nhận thông tin doanh nghiệp và giấy phép kinh doanh dạng multipart; Admin xem/duyệt tại `/api/admin/business-applications` và tải giấy phép qua `/api/admin/business-applications/{id}/license`.
 - Hồ sơ Business nhận mã số thuế, logo, số điện thoại người đại diện và giấy phép tùy chọn. Admin duyệt/từ chối hồ sơ trước khi Shop và tài khoản `SHOP_OWNER` được tạo.
-- Business quản lý hồ sơ tại `/api/shop/profile`, Farm tại `/api/shop/farms`, ảnh Farm qua `/api/shop/farms/images`, Batch tại `/api/shop/batches` và tải ảnh bằng chứng qua `/api/shop/batches/evidence`; các API khác gồm `/api/shop/products`, `/api/shop/orders`, `/api/shop/reviews`, `/api/shop/traceability`, `/api/shop/overview`. Tài khoản phải có role `SHOP_OWNER` và liên kết với cửa hàng.
+- Business quản lý hồ sơ tại `/api/shop/profile`, Farm tại `/api/shop/farms`, ảnh Farm qua `/api/shop/farms/images`, Batch tại `/api/shop/batches` và tải ảnh bằng chứng qua `/api/shop/batches/evidence`; các API khác gồm `/api/shop/products`, `/api/shop/orders`, `POST /api/shop/orders/{id}/ship`, `/api/shop/reviews`, `/api/shop/traceability`, `/api/shop/overview`. Tài khoản phải có role `SHOP_OWNER` và liên kết với cửa hàng.
 - Admin xác minh Farm tại `/api/admin/farms` và `/api/admin/farms/{id}/decision`. Batch mới phải kèm ít nhất một ảnh bằng chứng, bắt đầu ở trạng thái `PENDING_REVIEW`, và chỉ Farm `APPROVED` thuộc Shop hiện tại mới được chọn. Admin xem hàng chờ tại `/api/admin/traceability/review-queue`, xác minh hoặc yêu cầu sửa tại `/api/admin/traceability/{batchCode}/decision`; khi Business gửi lại hồ sơ, bằng chứng được lưu thành phiên bản mới. QR và dữ liệu truy xuất công khai chỉ có hiệu lực khi Batch ở trạng thái `VERIFIED`. Trạng thái vận hành riêng có thể cập nhật tại `/api/admin/traceability/{batchCode}/status` sau xác minh.
 - Customer tra cứu mã tại `/api/trace/{batchCode}` hoặc mở `/trace?batchCode=...`; lô chưa xác minh không được trả dữ liệu công khai. Response đã xác minh có Product, Farm, Business, kiểm định, đóng gói, vận chuyển và timeline. Business chỉ hiển thị QR sau khi Admin xác minh.
 - `GET /api/updates`
@@ -68,7 +68,7 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Không có tài khoản, shop, sản phẩm, bài viết, đánh giá, lượt quét hay hồ sơ truy xuất mẫu trong cơ sở dữ liệu sau khi migration V4 chạy. Trái cây dùng làm danh mục tra cứu; dữ liệu dinh dưỡng được để trống cho tới khi có nguồn thật.
 - Giá Bách Hóa Xanh và WinMart chỉ xuất hiện sau khi crawler đọc được giá từ các trang đã cấu hình. Backend lưu thời điểm, URL nguồn và lỗi crawl; khi crawl thất bại API không tạo giá thay thế.
 - `AI_SERVICE_URL` trống thì quét ảnh trả lỗi “chưa cấu hình dịch vụ phân tích ảnh”. Khi kết nối, endpoint AI nhận `multipart/form-data` field `file` và cần trả JSON gồm `fruitName`, `qualityScore`, `freshnessScore`, `ripenessLabel`, `sweetnessLabel`, `useWithin`, `qualityWarning`, `suggestion`, `confidence`. Có thể dùng `AI_SERVICE_API_KEY` cho Bearer token.
-- Đơn COD được ghi vào DB nhưng chưa tích hợp thanh toán, giao hàng hoặc trạng thái hoàn tất.
+- Đơn đặt hàng giữ tồn kho ngay khi tạo; Business chuyển đơn đã xác nhận sang `IN_TRANSIT`, khách xác nhận nhận hàng để hoàn tất. Doanh thu chỉ ghi vào ví sau khi đơn đã giao và khoản thanh toán đã đối soát; COD cần Admin xác nhận đã thu.
 - Bản đồ dùng Leaflet để hiển thị bản đồ đường phố OpenStreetMap, vị trí người dùng và các cửa hàng đã tìm được quanh đó.
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
 

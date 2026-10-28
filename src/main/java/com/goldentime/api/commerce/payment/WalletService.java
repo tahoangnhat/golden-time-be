@@ -24,12 +24,12 @@ public class WalletService {
     }
 
     @Transactional
-    public void recordPaidOrder(long orderId, long shopId, String externalReference, Long createdBy) {
+    public boolean recordPaidOrder(long orderId, long shopId, String externalReference, Long createdBy) {
         List<WalletOrder> orders = jdbc.query("""
                 SELECT o.subtotal_amount FROM orders o
-                WHERE o.id = ? AND o.shop_id = ? AND o.payment_status = 'PAID'
+                WHERE o.id = ? AND o.shop_id = ? AND o.payment_status = 'PAID' AND o.status = 'DELIVERED'
                 """, (rs, row) -> new WalletOrder(rs.getLong(1)), orderId, shopId);
-        if (orders.isEmpty()) return;
+        if (orders.isEmpty()) return false;
 
         long gross = orders.get(0).subtotal();
         BigDecimal rate = effectiveCommissionRate(shopId);
@@ -51,6 +51,7 @@ public class WalletService {
                     ON CONFLICT (order_id, entry_type) DO NOTHING
                     """, shopId, orderId, -commission, gross, rate, commission, externalReference, createdBy);
         }
+        return true;
     }
 
     @Transactional

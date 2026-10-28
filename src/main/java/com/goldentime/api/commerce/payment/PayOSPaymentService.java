@@ -17,14 +17,12 @@ public class PayOSPaymentService {
     private static final Logger log = LoggerFactory.getLogger(PayOSPaymentService.class);
     private final JdbcTemplate jdbc;
     private final PayOSClient payOS;
-    private final WalletService wallet;
     private final TransactionTemplate transactions;
 
-    public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS, WalletService wallet,
+    public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS,
                                org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.jdbc = jdbc;
         this.payOS = payOS;
-        this.wallet = wallet;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
@@ -136,7 +134,6 @@ public class PayOSPaymentService {
                     WHERE id = ? AND shop_id = ? AND payment_method = 'PAYOS' AND payment_status = 'PENDING'
                       AND total_amount = ?
                     """, reference, paymentLinkId, orderId, shopId, amount);
-            if (count == 1) wallet.recordPaidOrder(orderId, shopId, reference, null);
             return count;
         });
         if (updated == null || updated == 0) {
