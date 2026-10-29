@@ -83,7 +83,7 @@ public class CatalogController {
             @RequestParam(defaultValue = "25") double radiusKm) {
         if ((lat == null) != (lng == null)) throw ApiException.badRequest("Cần truyền đồng thời lat và lng.");
         StringBuilder sql = new StringBuilder("""
-                SELECT p.id, p.shop_id, s.name AS shop_name, s.latitude, s.longitude, f.id AS fruit_id,
+                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude, f.id AS fruit_id,
                        f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
@@ -113,7 +113,7 @@ public class CatalogController {
             double shopLat = rs.getDouble("latitude");
             double shopLng = rs.getDouble("longitude");
             Double distance = lat == null ? null : distanceKm(lat, lng, shopLat, shopLng);
-            return new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
+            return new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"), rs.getString("shop_address"),
                     (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                     rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                     rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
@@ -127,7 +127,7 @@ public class CatalogController {
     @GetMapping("/api/products/{id}")
     public ProductCard product(@PathVariable long id) {
         List<ProductCard> matches = jdbc.query("""
-                SELECT p.id, p.shop_id, s.name AS shop_name, s.latitude, s.longitude, f.id AS fruit_id,
+                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude, f.id AS fruit_id,
                        f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
@@ -139,7 +139,7 @@ public class CatalogController {
                 LEFT JOIN trace_batches verified_batch ON verified_batch.batch_code = p.batch_code
                     AND verified_batch.review_status = 'VERIFIED'
                 WHERE p.id = ? AND p.status = 'ON_SALE' AND s.status = 'ACTIVE'
-                """, (rs, row) -> new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
+                """, (rs, row) -> new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"), rs.getString("shop_address"),
                 (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                 rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                 rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
@@ -173,13 +173,13 @@ public class CatalogController {
     public record ShopSummary(long id, String name, String address, double latitude, double longitude,
                               BigDecimal rating, int reviewCount, String description, String popularFruit,
                               int productCount, Double distanceKm) {}
-    public record ProductCard(long id, long shopId, String shopName, Long fruitId, String fruitSlug,
+    public record ProductCard(long id, long shopId, String shopName, String shopAddress, Long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,
                               Double distanceKm, String imageUrl, boolean seasonal, boolean prepared,
                               List<String> imageUrls) {
         ProductCard withImageUrls(List<String> images) {
-            return new ProductCard(id, shopId, shopName, fruitId, fruitSlug, fruitName, emoji, category,
+            return new ProductCard(id, shopId, shopName, shopAddress, fruitId, fruitSlug, fruitName, emoji, category,
                     displayName, pricePerKg, stockKg, aiScore, batchCode, distanceKm, imageUrl, seasonal, prepared, images);
         }
     }
