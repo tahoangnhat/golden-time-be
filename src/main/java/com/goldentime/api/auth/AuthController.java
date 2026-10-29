@@ -111,6 +111,32 @@ public class AuthController {
         return new UserProfile(user.id(), user.email(), user.phone(), user.fullName(), user.role());
     }
 
+    @PutMapping("/me")
+    @Transactional
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public UserProfile updateMe(Authentication authentication, @Valid @RequestBody UpdateProfileRequest request) {
+        long userId = CurrentUser.id(authentication);
+        String fullName = request.fullName().trim();
+        String phone = request.phone() == null || request.phone().isBlank() ? null : request.phone().trim();
+
+        if (phone != null) {
+            long phoneDigits = phone.chars().filter(Character::isDigit).count();
+            if (phoneDigits < 9 || phoneDigits > 15) {
+                throw ApiException.badRequest("Vui lòng nhập số điện thoại hợp lệ.");
+            }
+            Integer phoneExists = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM users WHERE phone = ? AND id <> ? AND enabled = TRUE",
+                    Integer.class, phone, userId);
+            if (phoneExists != null && phoneExists > 0) {
+                throw new ApiException(HttpStatus.CONFLICT, "Số điện thoại đã được sử dụng cho tài khoản khác.");
+            }
+        }
+
+        jdbc.update("UPDATE users SET full_name = ?, phone = ? WHERE id = ? AND enabled = TRUE", fullName, phone, userId);
+        UserRow user = findUser(userId);
+        return new UserProfile(user.id(), user.email(), user.phone(), user.fullName(), user.role());
+    }
+
     private AuthResponse createSession(UserRow user, HttpServletResponse response) {
         RefreshTokenService.Session session = refreshTokens.issue(user.id());
         setRefreshCookie(response, session);
@@ -161,6 +187,8 @@ public class AuthController {
                                   @NotBlank @Size(max = 32) String phone,
                                   @NotBlank @Size(min = 8, max = 128) String password,
                                   @NotBlank @Size(max = 255) String fullName) {}
+    public record UpdateProfileRequest(@NotBlank @Size(max = 255) String fullName,
+                                       @Size(max = 32) String phone) {}
     public record UserProfile(long id, String email, String phone, String fullName, String role) {}
     public record AuthResponse(String accessToken, String tokenType, long expiresInSeconds,
                                long refreshExpiresInSeconds, UserProfile user) {}
