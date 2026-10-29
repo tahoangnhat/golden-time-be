@@ -87,12 +87,32 @@ public class AdminDataController {
     @GetMapping("/reviews")
     public List<ReviewRow> reviews() {
         return jdbc.query("""
-                SELECT r.id, u.full_name AS author, s.name AS shop_name, r.rating, r.comment, r.created_at,
+                SELECT r.id, u.full_name AS author, s.name AS shop_name, r.rating, r.created_at,
                        (r.order_id IS NOT NULL) AS purchased
                 FROM reviews r JOIN users u ON u.id = r.user_id JOIN shops s ON s.id = r.shop_id
                 ORDER BY r.created_at DESC, r.id DESC
                 """, (rs, row) -> new ReviewRow(rs.getLong("id"), rs.getString("author"), rs.getString("shop_name"),
-                rs.getInt("rating"), rs.getString("comment"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("purchased")));
+                rs.getInt("rating"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("purchased")));
+    }
+
+    @GetMapping("/product-reviews")
+    public List<AdminProductReviewRow> productReviews() {
+        return jdbc.query("""
+                SELECT pr.id, pr.shop_product_id AS product_id, sp.display_name AS product_name,
+                       s.name AS shop_name, u.full_name AS author, pr.rating, pr.created_at
+                FROM product_reviews pr
+                JOIN shop_products sp ON sp.id = pr.shop_product_id
+                JOIN shops s ON s.id = sp.shop_id
+                JOIN users u ON u.id = pr.user_id
+                ORDER BY pr.created_at DESC, pr.id DESC
+                """, (rs, row) -> new AdminProductReviewRow(
+                rs.getLong("id"),
+                rs.getLong("product_id"),
+                rs.getString("product_name"),
+                rs.getString("shop_name"),
+                rs.getString("author"),
+                rs.getInt("rating"),
+                rs.getTimestamp("created_at").toInstant()));
     }
 
     @GetMapping("/scans")
@@ -205,8 +225,10 @@ public class AdminDataController {
     public record OrderRow(long id, String customer, String shop, long total, long subtotal, long shippingFee,
                            String status, String payment, String paymentStatus, String note, String deliveryName, String deliveryPhone,
                            String deliveryAddress, Instant createdAt, int itemCount) {}
-    public record ReviewRow(long id, String user, String shop, int rating, String comment, Instant createdAt,
+    public record ReviewRow(long id, String user, String shop, int rating, Instant createdAt,
                             boolean purchased) {}
+    public record AdminProductReviewRow(long id, long productId, String productName, String shopName,
+                                        String author, int rating, Instant createdAt) {}
     public record ScanRow(long id, String fruit, String emoji, Integer freshness, Integer quality, Double confidence,
                           String user, String mode, Instant createdAt) {}
     public record NutritionRow(long id, String slug, String name, String emoji, String category, BigDecimal calories, BigDecimal vitaminC,

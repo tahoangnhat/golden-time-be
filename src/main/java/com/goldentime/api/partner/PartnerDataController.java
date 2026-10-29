@@ -316,6 +316,27 @@ public class PartnerDataController {
                 rs.getString("comment"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("purchased")), shopId);
     }
 
+    @GetMapping("/product-reviews")
+    public List<ShopProductReviewRow> productReviews(Authentication authentication) {
+        long shopId = shopId(CurrentUser.id(authentication));
+        return jdbc.query("""
+                SELECT pr.id, pr.shop_product_id AS product_id, sp.display_name AS product_name,
+                       u.full_name AS author, pr.rating, pr.comment, pr.created_at
+                FROM product_reviews pr
+                JOIN shop_products sp ON sp.id = pr.shop_product_id
+                JOIN users u ON u.id = pr.user_id
+                WHERE sp.shop_id = ?
+                ORDER BY pr.created_at DESC, pr.id DESC
+                """, (rs, row) -> new ShopProductReviewRow(
+                rs.getLong("id"),
+                rs.getLong("product_id"),
+                rs.getString("product_name"),
+                rs.getString("author"),
+                rs.getInt("rating"),
+                rs.getString("comment"),
+                rs.getTimestamp("created_at").toInstant()), shopId);
+    }
+
     @GetMapping("/traceability")
     public List<ShopTrace> traceability(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
@@ -444,6 +465,8 @@ public class PartnerDataController {
     }
     private record ShipmentOrder(String status, String paymentMethod, String paymentStatus) {}
     public record ShopReview(long id, String author, int rating, String comment, Instant createdAt, boolean purchased) {}
+    public record ShopProductReviewRow(long id, long productId, String productName, String author, int rating,
+                                       String comment, Instant createdAt) {}
     public record ShopTrace(String batchCode, String product, String origin, String supplier, boolean certified,
                             LocalDate harvestDate, LocalDate intakeDate, String certificates,
                             String storageTemperature, String storageHumidity, String publicNote) {}

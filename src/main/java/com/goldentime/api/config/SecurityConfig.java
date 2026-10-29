@@ -56,6 +56,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/payments/payos/webhook").permitAll()
                         .requestMatchers("/api/shipping/ghn/webhook").permitAll()
                         .requestMatchers("/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/logout", "/api/business/applications", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/uploads/**").permitAll()
+                        .requestMatchers("/api/products/*/review-eligibility").hasRole("USER")
+                        .requestMatchers(HttpMethod.POST, "/api/products/*/reviews").hasRole("USER")
                         .requestMatchers(HttpMethod.GET, "/api/fruits", "/api/fruits/**", "/api/products", "/api/products/**", "/api/shops", "/api/shops/*/reviews", "/api/payment-methods", "/api/market/prices", "/api/trace/**", "/api/articles", "/api/articles/**", "/api/updates", "/api/map/geocoding/search", "/api/map/geocoding/reverse", "/api/map/nearby-chain-stores").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/shop/**").hasRole("SHOP_OWNER")
