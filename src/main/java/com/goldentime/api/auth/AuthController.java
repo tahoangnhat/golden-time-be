@@ -64,13 +64,18 @@ public class AuthController {
     @Transactional
     public AuthResponse register(@Valid @RequestBody RegisterRequest request, HttpServletResponse response) {
         String email = request.email().trim().toLowerCase(Locale.ROOT);
+        String phone = request.phone().trim();
+        long phoneDigits = phone.chars().filter(Character::isDigit).count();
+        if (phoneDigits < 9 || phoneDigits > 15) {
+            throw ApiException.badRequest("Vui lòng nhập số điện thoại hợp lệ.");
+        }
         Integer exists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, email);
         if (exists != null && exists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email đã được đăng ký.");
         Long id = jdbc.queryForObject("""
                 INSERT INTO users (email, phone, password_hash, full_name, role, enabled)
                 VALUES (?, ?, ?, ?, 'USER', TRUE)
                 RETURNING id
-                """, Long.class, email, blankToNull(request.phone()), passwordEncoder.encode(request.password()), request.fullName().trim());
+                """, Long.class, email, phone, passwordEncoder.encode(request.password()), request.fullName().trim());
         UserRow user = findUser(id);
         return createSession(user, response);
     }
@@ -151,13 +156,9 @@ public class AuthController {
         return user;
     }
 
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
-    }
-
     public record LoginRequest(@NotBlank @Size(max = 255) String identifier, @NotBlank @Size(max = 128) String password) {}
     public record RegisterRequest(@Email @NotBlank @Size(max = 255) String email,
-                                  @Size(max = 32) String phone,
+                                  @NotBlank @Size(max = 32) String phone,
                                   @NotBlank @Size(min = 8, max = 128) String password,
                                   @NotBlank @Size(max = 255) String fullName) {}
     public record UserProfile(long id, String email, String phone, String fullName, String role) {}
