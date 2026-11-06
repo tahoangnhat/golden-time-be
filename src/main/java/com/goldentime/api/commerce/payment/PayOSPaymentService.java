@@ -1,6 +1,7 @@
 package com.goldentime.api.commerce.payment;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.goldentime.api.commerce.voucher.VoucherService;
 import com.goldentime.api.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,12 +19,15 @@ public class PayOSPaymentService {
     private final JdbcTemplate jdbc;
     private final PayOSClient payOS;
     private final TransactionTemplate transactions;
+    private final VoucherService voucherService;
 
     public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS,
-                               org.springframework.transaction.PlatformTransactionManager transactionManager) {
+                               org.springframework.transaction.PlatformTransactionManager transactionManager,
+                               VoucherService voucherService) {
         this.jdbc = jdbc;
         this.payOS = payOS;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.voucherService = voucherService;
     }
 
     public PayOSClient.PaymentLink createPaymentLink(long orderCode, long amount, String description,
@@ -162,6 +166,7 @@ public class PayOSPaymentService {
                         ) cancelled_items
                         WHERE cancelled_items.shop_product_id = p.id
                         """, orderId);
+                voucherService.releaseReservedVoucher(orderId);
             }
             return null;
         });

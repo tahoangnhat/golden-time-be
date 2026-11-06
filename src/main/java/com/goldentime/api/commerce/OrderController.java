@@ -4,6 +4,8 @@ import com.goldentime.api.common.ApiException;
 import com.goldentime.api.commerce.payment.PayOSPaymentService;
 import com.goldentime.api.commerce.payment.WalletService;
 import com.goldentime.api.commerce.shipping.GhnShippingService;
+import com.goldentime.api.commerce.voucher.VoucherRecords;
+import com.goldentime.api.commerce.voucher.VoucherService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -37,17 +39,19 @@ public class OrderController {
     private final PayOSPaymentService payments;
     private final WalletService wallet;
     private final GhnShippingService shipping;
+    private final VoucherService voucherService;
     private final String frontendUrl;
     private final int paymentLinkExpiryMinutes;
 
     public OrderController(JdbcTemplate jdbc, PayOSPaymentService payments, WalletService wallet,
-                           GhnShippingService shipping,
+                           GhnShippingService shipping, VoucherService voucherService,
                            @Value("${app.payment.frontend-url:http://localhost:8080}") String frontendUrl,
                            @Value("${app.payment.payos.link-expiry-minutes:15}") int paymentLinkExpiryMinutes) {
         this.jdbc = jdbc;
         this.payments = payments;
         this.wallet = wallet;
         this.shipping = shipping;
+        this.voucherService = voucherService;
         this.frontendUrl = frontendUrl;
         this.paymentLinkExpiryMinutes = paymentLinkExpiryMinutes;
     }
@@ -86,16 +90,31 @@ public class OrderController {
         GhnShippingService.Quote quote = shipping.quote(shopId, request.deliveryName().trim(), request.deliveryPhone().trim(),
                 fullAddress, province, ward, shippingItems, subtotal, "COD".equals(payment) ? subtotal : 0);
         long shippingFee = quote.shippingFee();
-        long total = Math.addExact(subtotal, shippingFee);
+
+        long discount = 0;
+        Long voucherId = null;
+        Long buyerVoucherId = request.buyerVoucherId();
+        if (buyerVoucherId != null) {
+            VoucherRecords.ValidatedVoucher validated = voucherService.validateForCheckout(buyerVoucherId, userId, shopId, subtotal);
+            discount = validated.discountAmount();
+            voucherId = validated.voucherId();
+        }
+        long netSubtotal = Math.max(0, subtotal - discount);
+        long total = Math.addExact(netSubtotal, shippingFee);
 
         Long orderId = jdbc.queryForObject("""
                 INSERT INTO orders (user_id, shop_id, status, total_amount, note, payment_method, payment_status,
                     delivery_name, delivery_phone, delivery_address, delivery_province_name, delivery_ward_name,
-                    subtotal_amount, shipping_fee)
-                VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    subtotal_amount, shipping_fee, discount_amount, voucher_id, buyer_voucher_id)
+                VALUES (?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
                 """, Long.class, userId, shopId, total, blankToNull(request.note()), payment, paymentStatus,
-                request.deliveryName().trim(), request.deliveryPhone().trim(), fullAddress, province, ward, subtotal, shippingFee);
+                request.deliveryName().trim(), request.deliveryPhone().trim(), fullAddress, province, ward, subtotal, shippingFee,
+                discount, voucherId, buyerVoucherId);
+
+        if (buyerVoucherId != null) {
+            voucherService.reserveVoucher(buyerVoucherId, orderId);
+        }
         for (LockedProduct product : products) {
             int updated = jdbc.update("UPDATE shop_products SET stock_kg = stock_kg - ? WHERE id = ? AND stock_kg >= ?",
                     product.quantityKg(), product.id(), product.quantityKg());
@@ -165,6 +184,7 @@ public class OrderController {
         int updated = jdbc.update("UPDATE orders SET status = 'DELIVERED' WHERE id = ? AND user_id = ? AND status = 'IN_TRANSIT'",
                 id, userId);
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
+        voucherService.markVoucherUsed(id);
         boolean walletCredited = wallet.recordPaidOrder(id, order.shopId(), order.paymentReference(), null);
         return new ReceiptConfirmation(walletCredited);
     }
@@ -172,7 +192,9 @@ public class OrderController {
     private OrderDetail detail(long orderId, long userId) {
         List<OrderHeader> headers = jdbc.query("""
                 SELECT o.id, o.shop_id, s.name AS shop_name, o.status, o.total_amount,
-                       o.subtotal_amount, o.shipping_fee, o.payment_method, o.payment_status,
+                       o.subtotal_amount, o.shipping_fee, COALESCE(o.discount_amount, 0) AS discount_amount,
+                       o.voucher_id, o.buyer_voucher_id,
+                       o.payment_method, o.payment_status,
                        o.payos_checkout_url, o.payos_qr_code, o.payment_expires_at, o.note,
                        o.delivery_name, o.delivery_phone, o.delivery_address, o.created_at,
                        sh.carrier_order_code, sh.carrier_status, sh.carrier_fee, sh.expected_delivery_at
@@ -181,7 +203,9 @@ public class OrderController {
                 WHERE o.id = ? AND o.user_id = ?
                 """, (rs, row) -> new OrderHeader(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"),
                 rs.getString("status"), rs.getLong("total_amount"), rs.getLong("subtotal_amount"),
-                rs.getLong("shipping_fee"), rs.getString("payment_method"), rs.getString("payment_status"),
+                rs.getLong("shipping_fee"), rs.getLong("discount_amount"), (Long) rs.getObject("voucher_id"),
+                (Long) rs.getObject("buyer_voucher_id"),
+                rs.getString("payment_method"), rs.getString("payment_status"),
                 rs.getString("payos_checkout_url"), rs.getString("payos_qr_code"),
                 rs.getTimestamp("payment_expires_at") == null ? null : rs.getTimestamp("payment_expires_at").toInstant(),
                 rs.getString("note"), rs.getString("delivery_name"), rs.getString("delivery_phone"),
@@ -200,7 +224,8 @@ public class OrderController {
                 """, (rs, row) -> new OrderItem(rs.getLong("shop_product_id"), rs.getString("display_name"),
                 rs.getString("emoji"), rs.getBigDecimal("quantity_kg"), rs.getLong("unit_price"), rs.getLong("line_total")), orderId);
         return new OrderDetail(header.id(), header.shopId(), header.shopName(), header.status(), header.subtotal(),
-                header.shippingFee(), header.total(), header.paymentMethod(), header.paymentStatus(),
+                header.shippingFee(), header.discountAmount(), header.voucherId(), header.buyerVoucherId(),
+                header.total(), header.paymentMethod(), header.paymentStatus(),
                 header.checkoutUrl(), header.qrCode(), header.paymentExpiresAt(), header.note(), header.deliveryName(),
                 header.deliveryPhone(), header.deliveryAddress(), header.createdAt(), header.trackingCode(),
                 header.carrierStatus(), header.carrierFee(), header.expectedDeliveryAt(), items);
@@ -236,7 +261,8 @@ public class OrderController {
         }
     }
     private record OrderHeader(long id, long shopId, String shopName, String status, long total,
-                               long subtotal, long shippingFee, String paymentMethod, String paymentStatus,
+                               long subtotal, long shippingFee, long discountAmount, Long voucherId, Long buyerVoucherId,
+                               String paymentMethod, String paymentStatus,
                                String checkoutUrl, String qrCode, Instant paymentExpiresAt, String note,
                                String deliveryName, String deliveryPhone, String deliveryAddress, Instant createdAt,
                                String trackingCode, String carrierStatus, long carrierFee, Instant expectedDeliveryAt) {}
@@ -251,11 +277,13 @@ public class OrderController {
                                      @NotBlank @Size(max = 400) String deliveryAddress,
                                      @NotBlank @Size(max = 255) String deliveryProvinceName,
                                      @NotBlank @Size(max = 255) String deliveryWardName,
-                                     @Size(max = 2000) String note) {}
+                                     @Size(max = 2000) String note,
+                                     Long buyerVoucherId) {}
     public record OrderItem(long productId, String name, String emoji, BigDecimal quantityKg,
                             long unitPrice, long lineTotal) {}
     public record OrderDetail(long id, long shopId, String shopName, String status, long subtotal,
-                              long shippingFee, long total, String paymentMethod, String paymentStatus,
+                              long shippingFee, long discountAmount, Long voucherId, Long buyerVoucherId,
+                              long total, String paymentMethod, String paymentStatus,
                               String checkoutUrl, String qrCode, Instant paymentExpiresAt, String note,
                               String deliveryName, String deliveryPhone, String deliveryAddress,
                               Instant createdAt, String trackingCode, String carrierStatus, long carrierFee,

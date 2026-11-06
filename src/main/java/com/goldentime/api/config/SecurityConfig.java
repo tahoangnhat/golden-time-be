@@ -64,6 +64,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/me").authenticated()
                         .requestMatchers("/api/shipping/**").authenticated()
                         .requestMatchers("/api/scans", "/api/scans/**", "/api/orders", "/api/orders/**", "/api/reviews", "/api/reviews/**").hasRole("USER")
+                        .requestMatchers("/api/buyer/**").hasRole("USER")
                         .anyRequest().denyAll())
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();

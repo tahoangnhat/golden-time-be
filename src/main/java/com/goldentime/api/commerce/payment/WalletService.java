@@ -39,14 +39,16 @@ public class WalletService {
     @Transactional
     public boolean recordPaidOrder(long orderId, long shopId, String externalReference, Long createdBy) {
         List<WalletOrder> orders = jdbc.query("""
-                SELECT o.subtotal_amount FROM orders o
+                SELECT o.subtotal_amount, COALESCE(o.discount_amount, 0) AS discount_amount FROM orders o
                 WHERE o.id = ? AND o.shop_id = ? AND o.payment_status = 'PAID' AND o.status = 'DELIVERED'
-                """, (rs, row) -> new WalletOrder(rs.getLong(1)), orderId, shopId);
+                """, (rs, row) -> new WalletOrder(rs.getLong("subtotal_amount"), rs.getLong("discount_amount")), orderId, shopId);
         if (orders.isEmpty()) return false;
 
-        long gross = orders.get(0).subtotal();
+        long subtotal = orders.get(0).subtotal();
+        long discount = orders.get(0).discount();
+        long commissionBase = Math.max(0L, subtotal - discount);
         BigDecimal rate = effectiveCommissionRate(shopId);
-        long commission = BigDecimal.valueOf(gross).multiply(rate)
+        long commission = BigDecimal.valueOf(commissionBase).multiply(rate)
                 .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP).longValueExact();
         jdbc.update("""
                 INSERT INTO shop_wallet_transactions
@@ -54,7 +56,7 @@ public class WalletService {
                      external_reference, description, created_by)
                 VALUES (?, ?, 'ORDER_SALE', ?, ?, ?, ?, ?, 'Tiền hàng đã thu qua sàn', ?)
                 ON CONFLICT (order_id, entry_type) DO NOTHING
-                """, shopId, orderId, gross, gross, rate, commission, externalReference, createdBy);
+                """, shopId, orderId, commissionBase, subtotal, rate, commission, externalReference, createdBy);
         if (commission > 0) {
             jdbc.update("""
                     INSERT INTO shop_wallet_transactions
@@ -62,7 +64,7 @@ public class WalletService {
                          external_reference, description, created_by)
                     VALUES (?, ?, 'COMMISSION_FEE', ?, ?, ?, ?, ?, 'Hoa hồng sàn', ?)
                     ON CONFLICT (order_id, entry_type) DO NOTHING
-                    """, shopId, orderId, -commission, gross, rate, commission, externalReference, createdBy);
+                    """, shopId, orderId, -commission, subtotal, rate, commission, externalReference, createdBy);
         }
         return true;
     }
@@ -421,7 +423,7 @@ public class WalletService {
         return value == null ? "" : value.trim();
     }
 
-    private record WalletOrder(long subtotal) {}
+    private record WalletOrder(long subtotal, long discount) {}
     private record OrderForCod(long shopId, String paymentStatus) {}
     private record CommissionSetting(String tier, BigDecimal customRate, Instant approvedAt) {}
     private record WithdrawalState(long shopId, long amount, String status) {}
