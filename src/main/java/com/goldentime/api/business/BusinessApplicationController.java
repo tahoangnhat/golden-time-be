@@ -28,6 +28,9 @@ public class BusinessApplicationController {
             @RequestParam("email") String email,
             @RequestParam("phone") String phone,
             @RequestParam("address") String address,
+            @RequestParam(value = "pickupAddress", required = false) String pickupAddress,
+            @RequestParam(value = "pickupProvinceName", required = false) String pickupProvinceName,
+            @RequestParam(value = "pickupWardName", required = false) String pickupWardName,
             @RequestParam(value = "latitude", required = false) Double latitude,
             @RequestParam(value = "longitude", required = false) Double longitude,
             @RequestParam(value = "googlePlaceId", required = false) String googlePlaceId,
@@ -36,7 +39,8 @@ public class BusinessApplicationController {
             @RequestParam(value = "logoFile", required = false) MultipartFile logoFile) {
         String resolvedTaxCode = taxCode == null || taxCode.isBlank() ? registrationNumber : taxCode;
         return applications.submit(businessName, resolvedTaxCode, contactName, email,
-                phone, address, latitude, longitude, googlePlaceId, password, representativePhone,
+                phone, address, pickupAddress, pickupProvinceName, pickupWardName,
+                latitude, longitude, googlePlaceId, password, representativePhone,
                 licenseFile, logoFile);
     }
 }

@@ -127,7 +127,7 @@ public class GhnShippingService {
                 SELECT o.id, o.total_amount, o.subtotal_amount, o.shipping_fee, o.payment_method,
                        o.delivery_name, o.delivery_phone, o.delivery_address,
                        o.delivery_province_name, o.delivery_ward_name,
-                       s.name AS shop_name, s.address AS pickup_address,
+                       s.name AS shop_name, COALESCE(NULLIF(s.pickup_address, ''), s.address) AS pickup_address,
                        s.pickup_province_name, s.pickup_ward_name,
                        COALESCE(NULLIF(s.business_phone, ''), NULLIF(s.representative_phone, ''), u.phone) AS pickup_phone
                 FROM orders o
@@ -282,7 +282,8 @@ public class GhnShippingService {
     private ShippingParty pickupParty(long shopId) {
         List<ShippingParty> shops = jdbc.query("""
                 SELECT s.name, COALESCE(NULLIF(s.business_phone, ''), NULLIF(s.representative_phone, ''), u.phone) AS phone,
-                       s.address, s.pickup_province_name, s.pickup_ward_name
+                       COALESCE(NULLIF(s.pickup_address, ''), s.address) AS address,
+                       s.pickup_province_name, s.pickup_ward_name
                 FROM shops s LEFT JOIN users u ON u.id = s.owner_user_id WHERE s.id = ?
                 """, (rs, row) -> new ShippingParty(rs.getString("name"), rs.getString("phone"),
                 rs.getString("address"), rs.getString("pickup_province_name"), rs.getString("pickup_ward_name")), shopId);

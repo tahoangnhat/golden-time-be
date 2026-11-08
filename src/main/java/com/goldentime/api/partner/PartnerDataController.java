@@ -90,6 +90,13 @@ public class PartnerDataController {
         }
         String address = request.address().trim();
         if (address.length() < 5) throw ApiException.badRequest("Địa chỉ cửa hàng cần dài ít nhất 5 ký tự.");
+        String pickupAddress = request.pickupAddress().trim();
+        if (pickupAddress.length() < 5) throw ApiException.badRequest("Địa chỉ lấy hàng cần dài ít nhất 5 ký tự.");
+        if (request.pickupProvinceName().isBlank() || request.pickupWardName().isBlank()) {
+            throw ApiException.badRequest("Vui lòng chọn tỉnh/thành và phường/xã lấy hàng GHN.");
+        }
+        String businessPhone = normalizeOptionalVietnamMobilePhone(request.businessPhone(), "Số điện thoại doanh nghiệp");
+        String representativePhone = normalizeOptionalVietnamMobilePhone(request.representativePhone(), "Số điện thoại người đại diện");
         String placeId = request.googlePlaceId() == null || request.googlePlaceId().isBlank()
                 ? null : request.googlePlaceId().trim();
         if (placeId != null && placeId.length() > 255) throw ApiException.badRequest("Mã địa điểm Google Maps không hợp lệ.");
@@ -98,6 +105,7 @@ public class PartnerDataController {
         long shopId = shopId(userId);
         jdbc.update("""
                 UPDATE shops SET name = COALESCE(NULLIF(?, ''), name), address = ?, latitude = ?, longitude = ?,
+                    pickup_address = ?,
                     google_place_id = ?, business_email = CASE WHEN ? IS NULL THEN business_email ELSE NULLIF(?, '') END,
                     business_phone = CASE WHEN ? IS NULL THEN business_phone ELSE NULLIF(?, '') END,
                     tax_code = CASE WHEN ? IS NULL THEN tax_code ELSE NULLIF(?, '') END,
@@ -107,14 +115,14 @@ public class PartnerDataController {
                     pickup_province_name = CASE WHEN ? IS NULL THEN pickup_province_name ELSE NULLIF(?, '') END,
                     pickup_ward_name = CASE WHEN ? IS NULL THEN pickup_ward_name ELSE NULLIF(?, '') END
                 WHERE id = ?
-                """, request.name() == null ? null : request.name().trim(), address, request.latitude(), request.longitude(), placeId,
-                request.businessEmail(), request.businessEmail(), request.businessPhone(), request.businessPhone(),
+                """, request.name() == null ? null : request.name().trim(), address, request.latitude(), request.longitude(),
+                pickupAddress, placeId, request.businessEmail(), request.businessEmail(), businessPhone, businessPhone,
                 request.taxCode(), request.taxCode(), request.representativeName(), request.representativeName(),
-                request.representativePhone(), request.representativePhone(), request.logoUrl(), request.logoUrl(),
+                representativePhone, representativePhone, request.logoUrl(), request.logoUrl(),
                 request.pickupProvinceName(), request.pickupProvinceName(), request.pickupWardName(), request.pickupWardName(), shopId);
-        if (request.businessPhone() != null) {
+        if (businessPhone != null) {
             jdbc.update("UPDATE users SET phone = NULLIF(?, '') WHERE shop_id = ? AND role = 'SHOP_OWNER'",
-                    request.businessPhone().trim(), shopId);
+                    businessPhone, shopId);
         }
         return shop(userId);
     }
@@ -458,7 +466,7 @@ public class PartnerDataController {
         List<ShopProfile> shops = jdbc.query("""
                 SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.google_place_id, s.status,
                        s.description, s.rating_avg, s.review_count, s.business_email, s.business_phone,
-                       s.tax_code, s.representative_name, s.representative_phone, s.logo_url,
+                       s.tax_code, s.representative_name, s.representative_phone, s.logo_url, s.pickup_address,
                        s.pickup_province_name, s.pickup_ward_name
                 FROM shops s LEFT JOIN users u ON u.id = ?
                 WHERE s.owner_user_id = ? OR s.id = u.shop_id
@@ -468,7 +476,7 @@ public class PartnerDataController {
                 rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count"),
                 rs.getString("business_email"), rs.getString("business_phone"), rs.getString("tax_code"),
                 rs.getString("representative_name"), rs.getString("representative_phone"), rs.getString("logo_url"),
-                rs.getString("pickup_province_name"), rs.getString("pickup_ward_name")), userId, userId);
+                rs.getString("pickup_address"), rs.getString("pickup_province_name"), rs.getString("pickup_ward_name")), userId, userId);
         if (shops.isEmpty()) throw ApiException.forbidden("Tài khoản chưa được liên kết với cửa hàng.");
         return shops.get(0);
     }
@@ -484,18 +492,32 @@ public class PartnerDataController {
                 && longitude >= -180 && longitude <= 180;
     }
 
+    private static String normalizeOptionalVietnamMobilePhone(String value, String label) {
+        if (value == null) return null;
+        if (value.isBlank()) return "";
+        String normalized = value.trim().replaceAll("[\\s().-]", "");
+        if (normalized.startsWith("+84")) normalized = "0" + normalized.substring(3);
+        else if (normalized.startsWith("84")) normalized = "0" + normalized.substring(2);
+        if (!normalized.matches("^0(?:3[2-9]|5[25689]|7[06789]|8[1-9]|9[0-9])\\d{7}$")) {
+            throw ApiException.badRequest(label + " không hợp lệ. Nhập số di động Việt Nam 10 số hoặc đầu +84.");
+        }
+        return normalized;
+    }
+
     public record ShopProfile(long id, String name, String address, double latitude, double longitude,
                               String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount,
                               String businessEmail, String businessPhone, String taxCode,
                               String representativeName, String representativePhone, String logoUrl,
-                              String pickupProvinceName, String pickupWardName) {}
+                              String pickupAddress, String pickupProvinceName, String pickupWardName) {}
     public record ShopLocationUpdate(@NotBlank @Size(max = 512) String address, @NotNull Double latitude,
                                     @NotNull Double longitude, @Size(max = 255) String googlePlaceId,
                                     @Size(min = 2, max = 255) String name,
                                     @Size(max = 255) String businessEmail, @Size(max = 32) String businessPhone,
                                     @Size(max = 64) String taxCode, @Size(max = 255) String representativeName,
                                     @Size(max = 32) String representativePhone, @Size(max = 1024) String logoUrl,
-                                    @Size(max = 255) String pickupProvinceName, @Size(max = 255) String pickupWardName) {}
+                                    @NotBlank @Size(max = 512) String pickupAddress,
+                                    @NotBlank @Size(max = 255) String pickupProvinceName,
+                                    @NotBlank @Size(max = 255) String pickupWardName) {}
     public record ShopProductWrite(Long fruitId,
                                    @NotBlank @Size(max = 32) String category,
                                    @NotBlank @Size(max = 255) String displayName,

@@ -37,18 +37,23 @@ public class BusinessApplicationService {
 
     @Transactional
     public ApplicationReceipt submit(String businessName, String registrationNumber, String contactName,
-                                     String emailValue, String phone, String address, Double latitude,
+                                     String emailValue, String phone, String address, String pickupAddress,
+                                     String pickupProvinceName, String pickupWardName, Double latitude,
                                      Double longitude, String googlePlaceId, String password,
                                      String representativePhone, MultipartFile licenseFile, MultipartFile logoFile) {
         String email = emailValue.trim().toLowerCase(Locale.ROOT);
         String name = businessName.trim();
         String registration = registrationNumber == null ? "" : registrationNumber.trim();
         String contact = contactName.trim();
-        String normalizedPhone = phone.trim();
+        String normalizedPhone = normalizeVietnamMobilePhone(phone, "Số điện thoại doanh nghiệp");
         String normalizedRepresentativePhone = representativePhone == null || representativePhone.isBlank()
-                ? normalizedPhone : representativePhone.trim();
+                ? normalizedPhone : normalizeVietnamMobilePhone(representativePhone, "Số điện thoại người đại diện");
         String normalizedAddress = address.trim();
-        validate(name, registration, contact, email, normalizedPhone, normalizedRepresentativePhone, normalizedAddress, password);
+        String normalizedPickupAddress = pickupAddress == null ? "" : pickupAddress.trim();
+        String normalizedPickupProvince = pickupProvinceName == null ? "" : pickupProvinceName.trim();
+        String normalizedPickupWard = pickupWardName == null ? "" : pickupWardName.trim();
+        validate(name, registration, contact, email, normalizedPhone, normalizedRepresentativePhone, normalizedAddress,
+                normalizedPickupAddress, normalizedPickupProvince, normalizedPickupWard, password);
         if ((latitude == null) != (longitude == null)
                 || (latitude != null && !validCoordinates(latitude, longitude))) {
             throw ApiException.badRequest("Tọa độ cửa hàng không hợp lệ.");
@@ -70,13 +75,14 @@ public class BusinessApplicationService {
             Long id = jdbc.queryForObject("""
                     INSERT INTO business_applications
                         (business_name, registration_number, tax_code, contact_name, representative_phone, email, phone, address,
-                         latitude, longitude, google_place_id,
+                         pickup_address, pickup_province_name, pickup_ward_name, latitude, longitude, google_place_id,
                          password_hash, license_file, license_original_name, license_content_type, logo_url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
                     """, Long.class, name, registration.isBlank() ? null : registration,
                     registration.isBlank() ? null : registration, contact, normalizedRepresentativePhone,
-                    email, normalizedPhone, normalizedAddress, latitude, longitude, normalizedPlaceId,
+                    email, normalizedPhone, normalizedAddress, normalizedPickupAddress, normalizedPickupProvince,
+                    normalizedPickupWard, latitude, longitude, normalizedPlaceId,
                     passwordEncoder.encode(password), license.storedName(), license.originalName(), license.contentType(), logoUrl);
             return new ApplicationReceipt(id, "PENDING", Instant.now());
         } catch (DuplicateKeyException exception) {
@@ -92,6 +98,7 @@ public class BusinessApplicationService {
     public List<ApplicationSummary> list() {
         return jdbc.query("""
                 SELECT id, business_name, registration_number, tax_code, contact_name, representative_phone, email, phone, address,
+                       pickup_address, pickup_province_name, pickup_ward_name,
                        license_original_name, license_content_type, status, rejection_reason, created_at,
                        reviewed_at, shop_id, notification_sent, latitude, longitude, google_place_id, logo_url
                 FROM business_applications
@@ -103,13 +110,15 @@ public class BusinessApplicationService {
     public ApplicationSummary decide(long id, boolean approved, String reason, long adminId) {
         List<LockedApplication> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, tax_code, contact_name, representative_phone,
-                       email, phone, address, password_hash, license_original_name, license_content_type,
+                       email, phone, address, pickup_address, pickup_province_name, pickup_ward_name,
+                       password_hash, license_original_name, license_content_type,
                        status, latitude, longitude, google_place_id, logo_url
                 FROM business_applications WHERE id = ? FOR UPDATE
                 """, (rs, row) -> new LockedApplication(rs.getLong("id"), rs.getString("business_name"),
                 rs.getString("registration_number"), rs.getString("tax_code"), rs.getString("contact_name"),
                 rs.getString("representative_phone"), rs.getString("email"), rs.getString("phone"),
-                rs.getString("address"), rs.getString("password_hash"),
+                rs.getString("address"), rs.getString("pickup_address"), rs.getString("pickup_province_name"),
+                rs.getString("pickup_ward_name"), rs.getString("password_hash"),
                 rs.getString("license_original_name"), rs.getString("license_content_type"), rs.getString("status"),
                 (Double) rs.getObject("latitude"), (Double) rs.getObject("longitude"), rs.getString("google_place_id"),
                 rs.getString("logo_url")), id);
@@ -134,13 +143,15 @@ public class BusinessApplicationService {
             Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, application.email());
             if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã được dùng cho một tài khoản khác.");
             shopId = jdbc.queryForObject("""
-                    INSERT INTO shops (name, address, latitude, longitude, google_place_id, status, approved_at,
+                    INSERT INTO shops (name, address, latitude, longitude, google_place_id, pickup_address,
+                                       pickup_province_name, pickup_ward_name, status, approved_at,
                                        commission_tier,
                                        business_email, business_phone, tax_code, representative_name,
                                        representative_phone, logo_url)
-                    VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), 'NEW_SHOP', ?, ?, ?, ?, ?, ?) RETURNING id
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', NOW(), 'NEW_SHOP', ?, ?, ?, ?, ?, ?) RETURNING id
                     """, Long.class, application.businessName(), submittedAddress, submittedLatitude,
-                    submittedLongitude, submittedPlaceId, application.email(), application.phone(), application.taxCode(),
+                    submittedLongitude, submittedPlaceId, application.pickupAddress(), application.pickupProvinceName(),
+                    application.pickupWardName(), application.email(), application.phone(), application.taxCode(),
                     application.contactName(), application.representativePhone(), application.logoUrl());
             Long userId = jdbc.queryForObject("""
                     INSERT INTO users (email, phone, password_hash, full_name, role, shop_id, enabled)
@@ -163,6 +174,7 @@ public class BusinessApplicationService {
         Instant reviewedAt = Instant.now();
         return new ApplicationSummary(id, application.businessName(), application.registrationNumber(), application.taxCode(),
                 application.contactName(), application.representativePhone(), application.email(), application.phone(), application.address(),
+                application.pickupAddress(), application.pickupProvinceName(), application.pickupWardName(),
                 application.licenseOriginalName(), application.licenseContentType(), status,
                 approved ? null : normalizedReason, reviewedAt, reviewedAt, shopId, notificationSent,
                 application.latitude(), application.longitude(), application.googlePlaceId(),
@@ -173,6 +185,7 @@ public class BusinessApplicationService {
     public ApplicationSummary resendNotification(long id) {
         List<ApplicationSummary> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, tax_code, contact_name, representative_phone, email, phone, address,
+                       pickup_address, pickup_province_name, pickup_ward_name,
                        license_original_name, license_content_type, status, rejection_reason, created_at,
                        reviewed_at, shop_id, notification_sent, latitude, longitude, google_place_id, logo_url
                 FROM business_applications WHERE id = ? FOR UPDATE
@@ -192,6 +205,7 @@ public class BusinessApplicationService {
         if (sent) jdbc.update("UPDATE business_applications SET notification_sent = TRUE WHERE id = ?", id);
         return new ApplicationSummary(application.id(), application.businessName(), application.registrationNumber(), application.taxCode(),
                 application.contactName(), application.representativePhone(), application.email(), application.phone(), application.address(),
+                application.pickupAddress(), application.pickupProvinceName(), application.pickupWardName(),
                 application.licenseOriginalName(), application.licenseContentType(), application.status(),
                 application.rejectionReason(), application.createdAt(), application.reviewedAt(), application.shopId(), sent,
                 application.latitude(), application.longitude(), application.googlePlaceId(), application.logoUrl());
@@ -211,15 +225,32 @@ public class BusinessApplicationService {
     }
 
     private static void validate(String name, String registration, String contact, String email,
-                                 String phone, String representativePhone, String address, String password) {
+                                 String phone, String representativePhone, String address, String pickupAddress,
+                                 String pickupProvinceName, String pickupWardName, String password) {
         if (name.length() < 2 || name.length() > 255) throw ApiException.badRequest("Tên doanh nghiệp cần dài từ 2 đến 255 ký tự.");
         if (!registration.isBlank() && (registration.length() < 3 || registration.length() > 64)) throw ApiException.badRequest("Mã số thuế không hợp lệ.");
         if (contact.length() < 2 || contact.length() > 255) throw ApiException.badRequest("Tên người liên hệ không hợp lệ.");
         if (email.length() > 255 || !email.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) throw ApiException.badRequest("Email không hợp lệ.");
-        if (phone.length() < 7 || phone.length() > 32) throw ApiException.badRequest("Số điện thoại không hợp lệ.");
-        if (representativePhone.length() < 7 || representativePhone.length() > 32) throw ApiException.badRequest("Số điện thoại người đại diện không hợp lệ.");
+        normalizeVietnamMobilePhone(phone, "Số điện thoại doanh nghiệp");
+        normalizeVietnamMobilePhone(representativePhone, "Số điện thoại người đại diện");
         if (address.length() < 5 || address.length() > 512) throw ApiException.badRequest("Địa chỉ cần dài từ 5 đến 512 ký tự.");
+        if (pickupAddress.length() < 5 || pickupAddress.length() > 512) throw ApiException.badRequest("Địa chỉ lấy hàng cần dài từ 5 đến 512 ký tự.");
+        if (pickupProvinceName.isBlank() || pickupProvinceName.length() > 255
+                || pickupWardName.isBlank() || pickupWardName.length() > 255) {
+            throw ApiException.badRequest("Vui lòng chọn tỉnh/thành và phường/xã lấy hàng GHN.");
+        }
         if (password == null || password.length() < 8 || password.length() > 128) throw ApiException.badRequest("Mật khẩu cần dài từ 8 đến 128 ký tự.");
+    }
+
+    private static String normalizeVietnamMobilePhone(String value, String label) {
+        if (value == null) throw ApiException.badRequest(label + " không hợp lệ.");
+        String normalized = value.trim().replaceAll("[\\s().-]", "");
+        if (normalized.startsWith("+84")) normalized = "0" + normalized.substring(3);
+        else if (normalized.startsWith("84")) normalized = "0" + normalized.substring(2);
+        if (!normalized.matches("^0(?:3[2-9]|5[25689]|7[06789]|8[1-9]|9[0-9])\\d{7}$")) {
+            throw ApiException.badRequest(label + " không hợp lệ. Nhập số di động Việt Nam 10 số hoặc đầu +84.");
+        }
+        return normalized;
     }
 
     private static boolean validCoordinates(Double latitude, Double longitude) {
@@ -239,7 +270,8 @@ public class BusinessApplicationService {
     public record ApplicationReceipt(long id, String status, Instant createdAt) {}
     public record ApplicationSummary(long id, String businessName, String registrationNumber, String taxCode,
                                     String contactName, String representativePhone, String email, String phone,
-                                    String address, String licenseOriginalName,
+                                    String address, String pickupAddress, String pickupProvinceName, String pickupWardName,
+                                    String licenseOriginalName,
                                     String licenseContentType, String status, String rejectionReason,
                                     Instant createdAt, Instant reviewedAt, Long shopId, Boolean notificationSent,
                                     Double latitude, Double longitude, String googlePlaceId, String logoUrl) {}
@@ -247,7 +279,8 @@ public class BusinessApplicationService {
     private record LicenseMetadata(String storedName, String originalName, String contentType) {}
     private record LockedApplication(long id, String businessName, String registrationNumber, String taxCode,
                                      String contactName, String representativePhone, String email, String phone,
-                                     String address, String passwordHash,
+                                     String address, String pickupAddress, String pickupProvinceName, String pickupWardName,
+                                     String passwordHash,
                                      String licenseOriginalName, String licenseContentType, String status,
                                      Double latitude, Double longitude, String googlePlaceId, String logoUrl) {}
 
@@ -255,7 +288,8 @@ public class BusinessApplicationService {
         return new ApplicationSummary(rs.getLong("id"), rs.getString("business_name"),
                 rs.getString("registration_number"), rs.getString("tax_code"), rs.getString("contact_name"),
                 rs.getString("representative_phone"), rs.getString("email"), rs.getString("phone"),
-                rs.getString("address"), rs.getString("license_original_name"),
+                rs.getString("address"), rs.getString("pickup_address"), rs.getString("pickup_province_name"),
+                rs.getString("pickup_ward_name"), rs.getString("license_original_name"),
                 rs.getString("license_content_type"), rs.getString("status"), rs.getString("rejection_reason"),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("reviewed_at") == null ? null : rs.getTimestamp("reviewed_at").toInstant(),
