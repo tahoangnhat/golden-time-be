@@ -53,6 +53,9 @@ public class BusinessApplicationService {
                 || (latitude != null && !validCoordinates(latitude, longitude))) {
             throw ApiException.badRequest("Tọa độ cửa hàng không hợp lệ.");
         }
+        if (licenseFile == null || licenseFile.isEmpty()) {
+            throw ApiException.badRequest("Vui lòng tải giấy phép kinh doanh lên.");
+        }
         String normalizedPlaceId = normalizePlaceId(googlePlaceId);
 
         Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, email);
@@ -61,8 +64,7 @@ public class BusinessApplicationService {
         if (applicationExists != null && applicationExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đang có hồ sơ chờ duyệt.");
 
         if (logoFile == null || logoFile.isEmpty()) throw ApiException.badRequest("Vui lòng tải logo doanh nghiệp lên.");
-        BusinessLicenseStorage.StoredLicense license = licenseFile == null || licenseFile.isEmpty()
-                ? null : licenseStorage.save(licenseFile);
+        BusinessLicenseStorage.StoredLicense license = licenseStorage.save(licenseFile);
         try {
             String logoUrl = logoFile == null || logoFile.isEmpty() ? null : imageStorage.saveBusinessLogo(logoFile).url();
             Long id = jdbc.queryForObject("""
@@ -75,14 +77,13 @@ public class BusinessApplicationService {
                     """, Long.class, name, registration.isBlank() ? null : registration,
                     registration.isBlank() ? null : registration, contact, normalizedRepresentativePhone,
                     email, normalizedPhone, normalizedAddress, latitude, longitude, normalizedPlaceId,
-                    passwordEncoder.encode(password), license == null ? null : license.storedName(),
-                    license == null ? null : license.originalName(), license == null ? null : license.contentType(), logoUrl);
+                    passwordEncoder.encode(password), license.storedName(), license.originalName(), license.contentType(), logoUrl);
             return new ApplicationReceipt(id, "PENDING", Instant.now());
         } catch (DuplicateKeyException exception) {
-            if (license != null) licenseStorage.delete(license.storedName());
+            licenseStorage.delete(license.storedName());
             throw new ApiException(HttpStatus.CONFLICT, "Email này đang có hồ sơ chờ duyệt.");
         } catch (RuntimeException exception) {
-            if (license != null) licenseStorage.delete(license.storedName());
+            licenseStorage.delete(license.storedName());
             throw exception;
         }
     }
@@ -99,9 +100,7 @@ public class BusinessApplicationService {
     }
 
     @Transactional
-    public ApplicationSummary decide(long id, boolean approved, String reason,
-                                     Double latitude, Double longitude, String address,
-                                     String googlePlaceId, long adminId) {
+    public ApplicationSummary decide(long id, boolean approved, String reason, long adminId) {
         List<LockedApplication> matches = jdbc.query("""
                 SELECT id, business_name, registration_number, tax_code, contact_name, representative_phone,
                        email, phone, address, password_hash, license_original_name, license_content_type,
@@ -119,14 +118,14 @@ public class BusinessApplicationService {
         if (!"PENDING".equals(application.status())) throw new ApiException(HttpStatus.CONFLICT, "Hồ sơ này đã được xử lý.");
         String normalizedReason = reason == null ? "" : reason.trim();
         if (!approved && normalizedReason.isBlank()) throw ApiException.badRequest("Hãy ghi lý do từ chối để gửi cho doanh nghiệp.");
-        String normalizedAddress = address == null ? application.address() : address.trim();
-        Double resolvedLatitude = latitude == null ? application.latitude() : latitude;
-        Double resolvedLongitude = longitude == null ? application.longitude() : longitude;
-        String resolvedPlaceId = normalizePlaceId(googlePlaceId);
-        if (approved && (normalizedAddress.length() < 5 || normalizedAddress.length() > 512)) {
+        String submittedAddress = application.address();
+        Double submittedLatitude = application.latitude();
+        Double submittedLongitude = application.longitude();
+        String submittedPlaceId = application.googlePlaceId();
+        if (approved && (submittedAddress.length() < 5 || submittedAddress.length() > 512)) {
             throw ApiException.badRequest("Địa chỉ cửa hàng cần dài từ 5 đến 512 ký tự.");
         }
-        if (approved && !validCoordinates(resolvedLatitude, resolvedLongitude)) {
+        if (approved && !validCoordinates(submittedLatitude, submittedLongitude)) {
             throw ApiException.badRequest("Không xác định được tọa độ hợp lệ từ địa chỉ doanh nghiệp đã đăng ký.");
         }
 
@@ -140,8 +139,8 @@ public class BusinessApplicationService {
                                        business_email, business_phone, tax_code, representative_name,
                                        representative_phone, logo_url)
                     VALUES (?, ?, ?, ?, ?, 'ACTIVE', NOW(), 'NEW_SHOP', ?, ?, ?, ?, ?, ?) RETURNING id
-                    """, Long.class, application.businessName(), normalizedAddress, resolvedLatitude,
-                    resolvedLongitude, resolvedPlaceId, application.email(), application.phone(), application.taxCode(),
+                    """, Long.class, application.businessName(), submittedAddress, submittedLatitude,
+                    submittedLongitude, submittedPlaceId, application.email(), application.phone(), application.taxCode(),
                     application.contactName(), application.representativePhone(), application.logoUrl());
             Long userId = jdbc.queryForObject("""
                     INSERT INTO users (email, phone, password_hash, full_name, role, shop_id, enabled)
@@ -160,16 +159,13 @@ public class BusinessApplicationService {
                     address = ?, latitude = ?, longitude = ?, google_place_id = ?
                 WHERE id = ?
                 """, status, approved ? null : normalizedReason, shopId, adminId, notificationSent,
-                approved ? normalizedAddress : application.address(),
-                approved ? resolvedLatitude : application.latitude(), approved ? resolvedLongitude : application.longitude(),
-                approved ? resolvedPlaceId : application.googlePlaceId(), id);
+                application.address(), application.latitude(), application.longitude(), application.googlePlaceId(), id);
         Instant reviewedAt = Instant.now();
         return new ApplicationSummary(id, application.businessName(), application.registrationNumber(), application.taxCode(),
-                application.contactName(), application.representativePhone(), application.email(), application.phone(), approved ? normalizedAddress : application.address(),
+                application.contactName(), application.representativePhone(), application.email(), application.phone(), application.address(),
                 application.licenseOriginalName(), application.licenseContentType(), status,
                 approved ? null : normalizedReason, reviewedAt, reviewedAt, shopId, notificationSent,
-                approved ? resolvedLatitude : application.latitude(),
-                approved ? resolvedLongitude : application.longitude(), approved ? resolvedPlaceId : application.googlePlaceId(),
+                application.latitude(), application.longitude(), application.googlePlaceId(),
                 application.logoUrl());
     }
 

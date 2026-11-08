@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -83,7 +84,9 @@ public class CatalogController {
             @RequestParam(defaultValue = "25") double radiusKm) {
         if ((lat == null) != (lng == null)) throw ApiException.badRequest("Cần truyền đồng thời lat và lng.");
         StringBuilder sql = new StringBuilder("""
-                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude, f.id AS fruit_id,
+                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude,
+                       trace_farm.name AS trace_farm_name, trace_farm.address AS trace_farm_address,
+                       p.trace_order_date, p.trace_transport_date, p.trace_received_date, f.id AS fruit_id,
                        f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
@@ -94,6 +97,7 @@ public class CatalogController {
                 LEFT JOIN fruits f ON f.id = p.fruit_id
                 LEFT JOIN trace_batches verified_batch ON verified_batch.batch_code = p.batch_code
                     AND verified_batch.review_status = 'VERIFIED'
+                LEFT JOIN farms trace_farm ON trace_farm.id = p.trace_farm_id
                 WHERE p.status = 'ON_SALE' AND p.stock_kg > 0 AND s.status = 'ACTIVE'
                 """);
         List<Object> args = new ArrayList<>();
@@ -117,7 +121,10 @@ public class CatalogController {
                     (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                     rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                     rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
-                    distance, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of());
+                    distance, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of(),
+                    rs.getString("trace_farm_name"), rs.getString("trace_farm_address"),
+                    rs.getObject("trace_order_date", LocalDate.class), rs.getObject("trace_transport_date", LocalDate.class),
+                    rs.getObject("trace_received_date", LocalDate.class));
         }, args.toArray());
         List<ProductCard> productsWithImages = products.stream().map(this::withProductImages).toList();
         if (lat == null) return productsWithImages;
@@ -127,7 +134,9 @@ public class CatalogController {
     @GetMapping("/api/products/{id}")
     public ProductCard product(@PathVariable long id) {
         List<ProductCard> matches = jdbc.query("""
-                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude, f.id AS fruit_id,
+                SELECT p.id, p.shop_id, s.name AS shop_name, s.address AS shop_address, s.latitude, s.longitude,
+                       trace_farm.name AS trace_farm_name, trace_farm.address AS trace_farm_address,
+                       p.trace_order_date, p.trace_transport_date, p.trace_received_date, f.id AS fruit_id,
                        f.slug AS fruit_slug, COALESCE(f.name, p.display_name) AS fruit_name,
                        COALESCE(f.emoji, '🍎') AS emoji, p.product_category AS category,
                        (p.product_category = 'SEASONAL') AS is_seasonal,
@@ -138,12 +147,16 @@ public class CatalogController {
                 LEFT JOIN fruits f ON f.id = p.fruit_id
                 LEFT JOIN trace_batches verified_batch ON verified_batch.batch_code = p.batch_code
                     AND verified_batch.review_status = 'VERIFIED'
+                LEFT JOIN farms trace_farm ON trace_farm.id = p.trace_farm_id
                 WHERE p.id = ? AND p.status = 'ON_SALE' AND s.status = 'ACTIVE'
                 """, (rs, row) -> new ProductCard(rs.getLong("id"), rs.getLong("shop_id"), rs.getString("shop_name"), rs.getString("shop_address"),
                 (Long) rs.getObject("fruit_id"), rs.getString("fruit_slug"), rs.getString("fruit_name"), rs.getString("emoji"),
                 rs.getString("category"), rs.getString("display_name"), rs.getLong("price_per_kg"),
                 rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("batch_code"),
-                null, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of()), id);
+                null, rs.getString("image_url"), rs.getBoolean("is_seasonal"), rs.getBoolean("is_prepared"), List.of(),
+                rs.getString("trace_farm_name"), rs.getString("trace_farm_address"),
+                rs.getObject("trace_order_date", LocalDate.class), rs.getObject("trace_transport_date", LocalDate.class),
+                rs.getObject("trace_received_date", LocalDate.class)), id);
         if (matches.isEmpty()) throw ApiException.notFound("Không tìm thấy sản phẩm hoặc sản phẩm đã ngừng bán.");
         return withProductImages(matches.get(0));
     }
@@ -177,10 +190,12 @@ public class CatalogController {
                               String fruitName, String emoji, String category, String displayName,
                               long pricePerKg, BigDecimal stockKg, Integer aiScore, String batchCode,
                               Double distanceKm, String imageUrl, boolean seasonal, boolean prepared,
-                              List<String> imageUrls) {
+                              List<String> imageUrls, String farmName, String farmAddress,
+                              LocalDate orderDate, LocalDate transportDate, LocalDate receivedDate) {
         ProductCard withImageUrls(List<String> images) {
             return new ProductCard(id, shopId, shopName, shopAddress, fruitId, fruitSlug, fruitName, emoji, category,
-                    displayName, pricePerKg, stockKg, aiScore, batchCode, distanceKm, imageUrl, seasonal, prepared, images);
+                    displayName, pricePerKg, stockKg, aiScore, batchCode, distanceKm, imageUrl, seasonal, prepared,
+                    images, farmName, farmAddress, orderDate, transportDate, receivedDate);
         }
     }
 }

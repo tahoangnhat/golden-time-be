@@ -47,8 +47,11 @@ public class PartnerDataController {
                    (p.product_category = 'PREPARED') AS is_prepared,
                    p.display_name, p.price_per_kg, p.stock_kg, p.ai_score, p.status, p.batch_code, p.image_url,
                    p.product_origin, p.supplier_name, p.lot_code, p.traceability_proof,
+                   p.trace_farm_id, trace_farm.name AS trace_farm_name, trace_farm.address AS trace_farm_address,
+                   p.trace_order_date, p.trace_transport_date, p.trace_received_date, p.trace_evidence_image_url,
                    p.approval_status, p.review_note
             FROM shop_products p LEFT JOIN fruits f ON f.id = p.fruit_id
+            LEFT JOIN farms trace_farm ON trace_farm.id = p.trace_farm_id
             """;
     private static final RowMapper<ShopProduct> SHOP_PRODUCT_MAPPER = (rs, row) -> new ShopProduct(
             rs.getLong("id"), (Long) rs.getObject("fruit_id"), rs.getString("fruit_name"), rs.getString("emoji"),
@@ -57,6 +60,9 @@ public class PartnerDataController {
             rs.getBigDecimal("stock_kg"), (Integer) rs.getObject("ai_score"), rs.getString("status"),
             rs.getString("batch_code"), rs.getString("image_url"), rs.getString("product_origin"),
             rs.getString("supplier_name"), rs.getString("lot_code"), rs.getString("traceability_proof"),
+            (Long) rs.getObject("trace_farm_id"), rs.getString("trace_farm_name"), rs.getString("trace_farm_address"),
+            rs.getObject("trace_order_date", LocalDate.class), rs.getObject("trace_transport_date", LocalDate.class),
+            rs.getObject("trace_received_date", LocalDate.class), rs.getString("trace_evidence_image_url"),
             rs.getString("approval_status"), rs.getString("review_note"), List.of());
 
     private final JdbcTemplate jdbc;
@@ -131,6 +137,13 @@ public class PartnerDataController {
         return imageStorage.saveProductImage(file);
     }
 
+    @PostMapping(value = "/products/traceability-evidence", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ArticleImageStorage.StoredImage uploadProductTraceabilityEvidence(Authentication authentication,
+                                                                               @RequestPart("file") MultipartFile file) {
+        shopId(CurrentUser.id(authentication));
+        return imageStorage.saveTraceabilityEvidence(file);
+    }
+
     @PostMapping("/products")
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
@@ -138,18 +151,20 @@ public class PartnerDataController {
         long shopId = shopId(CurrentUser.id(authentication));
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
+        validateApprovedTraceFarm(shopId, request.farmId());
+        validateTraceDates(request.orderDate(), request.transportDate(), request.receivedDate());
+        String evidenceImageUrl = validateRequiredImageUrl(request.evidenceImageUrl(), "ảnh bằng chứng truy xuất nguồn gốc");
         List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
         String imageUrl = imageUrls.get(0);
         long productId = jdbc.queryForObject("""
                 INSERT INTO shop_products (shop_id, fruit_id, product_category, is_seasonal, is_prepared,
-                    display_name, price_per_kg, stock_kg, status, image_url, product_origin, supplier_name,
-                    lot_code, traceability_proof, approval_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'HIDDEN', ?, ?, ?, ?, ?, 'PENDING_REVIEW')
+                    display_name, price_per_kg, stock_kg, status, image_url, trace_farm_id, trace_order_date,
+                    trace_transport_date, trace_received_date, trace_evidence_image_url, approval_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'HIDDEN', ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW')
                 RETURNING id
                 """, Long.class, shopId, request.fruitId(), request.category(),
                 "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()), request.displayName().trim(), request.pricePerKg(),
-                request.stockKg(), imageUrl, request.productOrigin().trim(), request.supplierName().trim(),
-                request.lotCode().trim(), request.traceabilityProof().trim());
+                request.stockKg(), imageUrl, request.farmId(), request.orderDate(), request.transportDate(), request.receivedDate(), evidenceImageUrl);
         saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
     }
@@ -161,19 +176,23 @@ public class PartnerDataController {
         long shopId = shopId(CurrentUser.id(authentication));
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
+        validateApprovedTraceFarm(shopId, request.farmId());
+        validateTraceDates(request.orderDate(), request.transportDate(), request.receivedDate());
+        String evidenceImageUrl = validateRequiredImageUrl(request.evidenceImageUrl(), "ảnh bằng chứng truy xuất nguồn gốc");
         List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
         String imageUrl = imageUrls.get(0);
         int updated = jdbc.update("""
                 UPDATE shop_products
                 SET fruit_id = ?, product_category = ?, is_seasonal = ?, is_prepared = ?, display_name = ?,
-                    price_per_kg = ?, stock_kg = ?, status = 'HIDDEN', image_url = ?, product_origin = ?,
-                    supplier_name = ?, lot_code = ?, traceability_proof = ?, approval_status = 'PENDING_REVIEW',
+                    price_per_kg = ?, stock_kg = ?, status = 'HIDDEN', image_url = ?, product_origin = NULL,
+                    supplier_name = NULL, lot_code = NULL, traceability_proof = NULL,
+                    trace_farm_id = ?, trace_order_date = ?, trace_transport_date = ?, trace_received_date = ?,
+                    trace_evidence_image_url = ?, approval_status = 'PENDING_REVIEW',
                     review_note = NULL, reviewed_by = NULL, reviewed_at = NULL
                 WHERE id = ? AND shop_id = ?
                 """, request.fruitId(), request.category(), "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()),
                 request.displayName().trim(), request.pricePerKg(), request.stockKg(), imageUrl,
-                request.productOrigin().trim(), request.supplierName().trim(), request.lotCode().trim(),
-                request.traceabilityProof().trim(), productId, shopId);
+                request.farmId(), request.orderDate(), request.transportDate(), request.receivedDate(), evidenceImageUrl, productId, shopId);
         if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
@@ -208,6 +227,25 @@ public class PartnerDataController {
         }
     }
 
+    private void validateApprovedTraceFarm(long shopId, Long farmId) {
+        if (farmId == null) throw ApiException.badRequest("Hãy chọn nông trại đã được admin xác minh.");
+        Boolean approved = jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM farms WHERE id = ? AND shop_id = ? AND status = 'APPROVED')",
+                Boolean.class, farmId, shopId);
+        if (!Boolean.TRUE.equals(approved)) {
+            throw ApiException.badRequest("Chỉ được chọn nông trại của cửa hàng đã được admin xác minh.");
+        }
+    }
+
+    private void validateTraceDates(LocalDate orderDate, LocalDate transportDate, LocalDate receivedDate) {
+        if (orderDate == null || transportDate == null || receivedDate == null) {
+            throw ApiException.badRequest("Hãy nhập ngày đặt hàng, ngày vận chuyển và ngày nhận hàng.");
+        }
+        if (transportDate.isBefore(orderDate) || receivedDate.isBefore(transportDate)) {
+            throw ApiException.badRequest("Ngày vận chuyển phải từ ngày đặt hàng và ngày nhận hàng phải từ ngày vận chuyển.");
+        }
+    }
+
     private String validateProductImageUrl(String imageUrl) {
         String value = imageUrl.trim();
         URI uri;
@@ -218,6 +256,23 @@ public class PartnerDataController {
         }
         if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
             throw ApiException.badRequest("Ảnh sản phẩm cần có địa chỉ HTTPS công khai.");
+        }
+        return value;
+    }
+
+    private String validateRequiredImageUrl(String imageUrl, String label) {
+        if (imageUrl == null || imageUrl.isBlank()) {
+            throw ApiException.badRequest("Hãy tải lên " + label + ".");
+        }
+        String value = imageUrl.trim();
+        URI uri;
+        try {
+            uri = URI.create(value);
+        } catch (IllegalArgumentException exception) {
+            throw ApiException.badRequest("Địa chỉ ảnh bằng chứng không hợp lệ.");
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
+            throw ApiException.badRequest("Ảnh bằng chứng cần có địa chỉ HTTPS công khai.");
         }
         return value;
     }
@@ -432,10 +487,11 @@ public class PartnerDataController {
                                    @NotBlank @Size(max = 255) String displayName,
                                    @NotNull @Positive @Digits(integer = 12, fraction = 0) Long pricePerKg,
                                    @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
-                                   @NotBlank @Size(max = 512) String productOrigin,
-                                   @NotBlank @Size(max = 255) String supplierName,
-                                   @NotBlank @Size(max = 128) String lotCode,
-                                   @NotBlank @Size(max = 4000) String traceabilityProof,
+                                   @NotNull @Positive Long farmId,
+                                   @NotNull LocalDate orderDate,
+                                   @NotNull LocalDate transportDate,
+                                   @NotNull LocalDate receivedDate,
+                                   @NotBlank @Size(max = 1024) String evidenceImageUrl,
                                    @NotNull Boolean onSale,
                                    @Size(max = 1024) String imageUrl,
                                    @Size(max = 10) List<@Size(max = 1024) String> imageUrls) {}
@@ -444,12 +500,15 @@ public class PartnerDataController {
                               boolean seasonal, boolean prepared,
                               String displayName, long pricePerKg, BigDecimal stockKg, Integer aiScore,
                               String status, String batchCode, String imageUrl, String productOrigin,
-                              String supplierName, String lotCode, String traceabilityProof,
+                              String supplierName, String lotCode, String traceabilityProof, Long farmId,
+                              String farmName, String farmAddress, LocalDate orderDate, LocalDate transportDate,
+                              LocalDate receivedDate, String evidenceImageUrl,
                               String approvalStatus, String reviewNote, List<String> imageUrls) {
         ShopProduct withImageUrls(List<String> images) {
             return new ShopProduct(id, fruitId, fruitName, emoji, category, seasonal, prepared, displayName,
                     pricePerKg, stockKg, aiScore, status, batchCode, imageUrl, productOrigin, supplierName,
-                    lotCode, traceabilityProof, approvalStatus, reviewNote, images);
+                    lotCode, traceabilityProof, farmId, farmName, farmAddress, orderDate, transportDate,
+                    receivedDate, evidenceImageUrl, approvalStatus, reviewNote, images);
         }
     }
     public record ShopOrderItem(String name, String emoji, BigDecimal quantityKg, long unitPrice, long lineTotal) {}
