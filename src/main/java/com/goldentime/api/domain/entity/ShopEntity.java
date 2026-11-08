@@ -49,7 +49,7 @@ public class ShopEntity {
     private BigDecimal ratingAvg = BigDecimal.ZERO;
 
     @Column(name = "review_count", nullable = false)
-    private int reviewCount;
+    private int ratingCount;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -136,12 +136,12 @@ public class ShopEntity {
         this.ratingAvg = ratingAvg;
     }
 
-    public int getReviewCount() {
-        return reviewCount;
+    public int getRatingCount() {
+        return ratingCount;
     }
 
-    public void setReviewCount(int reviewCount) {
-        this.reviewCount = reviewCount;
+    public void setRatingCount(int ratingCount) {
+        this.ratingCount = ratingCount;
     }
 
     public ShopStatus getStatus() {

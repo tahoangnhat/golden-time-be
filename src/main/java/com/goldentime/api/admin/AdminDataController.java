@@ -27,7 +27,8 @@ public class AdminDataController {
                 SELECT u.id, u.full_name, u.email, u.role, u.phone, u.enabled, u.created_at,
                        (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count,
                        (SELECT COUNT(*) FROM ai_scans a WHERE a.user_id = u.id) AS scan_count,
-                       (SELECT COUNT(*) FROM reviews r WHERE r.user_id = u.id) AS review_count
+                       (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.shop_rating IS NOT NULL)
+                         + (SELECT COUNT(*) FROM product_reviews pr WHERE pr.user_id = u.id) AS review_count
                 FROM users u ORDER BY u.created_at DESC, u.id DESC
                 """, (rs, row) -> new UserRow(rs.getLong("id"), rs.getString("full_name"), rs.getString("email"),
                 rs.getString("role"), rs.getString("phone"), rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(),
@@ -37,7 +38,7 @@ public class AdminDataController {
     @GetMapping("/shops")
     public List<ShopRow> shops() {
         return jdbc.query("""
-                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status, s.rating_avg, s.review_count,
+                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.status, s.rating_avg, s.review_count AS rating_count,
                        u.full_name AS owner_name,
                        (SELECT COUNT(*) FROM shop_products p WHERE p.shop_id = s.id) AS product_count,
                        (SELECT COALESCE(SUM(o.total_amount), 0) FROM orders o
@@ -46,7 +47,7 @@ public class AdminDataController {
                 ORDER BY s.created_at DESC, s.id DESC
                 """, (rs, row) -> new ShopRow(rs.getLong("id"), rs.getString("name"), rs.getString("address"),
                 rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("status"),
-                rs.getBigDecimal("rating_avg"), rs.getInt("review_count"), rs.getString("owner_name"),
+                rs.getBigDecimal("rating_avg"), rs.getInt("rating_count"), rs.getString("owner_name"),
                 rs.getInt("product_count"), rs.getLong("order_value")));
     }
 
@@ -88,17 +89,6 @@ public class AdminDataController {
                 rs.getString("status"), rs.getString("payment_method"), rs.getString("payment_status"), rs.getString("note"),
                 rs.getString("delivery_name"), rs.getString("delivery_phone"), rs.getString("delivery_address"),
                 rs.getTimestamp("created_at").toInstant(), rs.getInt("item_count")));
-    }
-
-    @GetMapping("/reviews")
-    public List<ReviewRow> reviews() {
-        return jdbc.query("""
-                SELECT r.id, u.full_name AS author, s.name AS shop_name, r.rating, r.created_at,
-                       (r.order_id IS NOT NULL) AS purchased
-                FROM reviews r JOIN users u ON u.id = r.user_id JOIN shops s ON s.id = r.shop_id
-                ORDER BY r.created_at DESC, r.id DESC
-                """, (rs, row) -> new ReviewRow(rs.getLong("id"), rs.getString("author"), rs.getString("shop_name"),
-                rs.getInt("rating"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("purchased")));
     }
 
     @GetMapping("/product-reviews")
@@ -223,7 +213,7 @@ public class AdminDataController {
     public record UserRow(long id, String name, String email, String role, String phone, boolean enabled, Instant joined,
                           long orders, long scans, long reviews) {}
     public record ShopRow(long id, String name, String address, double latitude, double longitude, String status,
-                          BigDecimal rating, int reviewCount, String owner, int products, long orderValue) {}
+                          BigDecimal rating, int ratingCount, String owner, int products, long orderValue) {}
     public record ProductRow(long id, String emoji, String name, String shop, long price, BigDecimal stock,
                              Integer score, String status, String category, String approvalStatus,
                              String productOrigin, String supplierName, String lotCode, String traceabilityProof,
@@ -232,8 +222,6 @@ public class AdminDataController {
     public record OrderRow(long id, String customer, String shop, long total, long subtotal, long shippingFee,
                            String status, String payment, String paymentStatus, String note, String deliveryName, String deliveryPhone,
                            String deliveryAddress, Instant createdAt, int itemCount) {}
-    public record ReviewRow(long id, String user, String shop, int rating, Instant createdAt,
-                            boolean purchased) {}
     public record AdminProductReviewRow(long id, long productId, String productName, String shopName,
                                         String author, int rating, Instant createdAt) {}
     public record ScanRow(long id, String fruit, String emoji, Integer freshness, Integer quality, Double confidence,

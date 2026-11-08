@@ -22,15 +22,18 @@ public class PayOSPaymentService {
     private final TransactionTemplate transactions;
     private final VoucherService voucherService;
     private final PremiumService premiumService;
+    private final WalletService wallet;
 
     public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS,
                                org.springframework.transaction.PlatformTransactionManager transactionManager,
-                               VoucherService voucherService, PremiumService premiumService) {
+                               VoucherService voucherService, PremiumService premiumService,
+                               WalletService wallet) {
         this.jdbc = jdbc;
         this.payOS = payOS;
         this.transactions = new TransactionTemplate(transactionManager);
         this.voucherService = voucherService;
         this.premiumService = premiumService;
+        this.wallet = wallet;
     }
 
     public PayOSClient.PaymentLink createPaymentLink(long orderCode, long amount, String description,
@@ -98,7 +101,12 @@ public class PayOSPaymentService {
         if (!"PAYOS".equals(order.paymentMethod())) {
             throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng không sử dụng PayOS.");
         }
-        if (!"PENDING".equals(order.paymentStatus())) return;
+        if (!"PENDING".equals(order.paymentStatus())) {
+            if ("PAID".equals(order.paymentStatus())) {
+                wallet.recordPaidOrder(orderId, order.shopId(), null, null);
+            }
+            return;
+        }
 
         PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(orderId);
         if (isPaid(remote, order.totalAmount())) {
@@ -166,14 +174,16 @@ public class PayOSPaymentService {
                     """, reference, paymentLinkId, orderId, shopId, amount);
             return count;
         });
-        if (updated == null || updated == 0) {
+        boolean paid = updated != null && updated > 0;
+        if (!paid) {
             Integer matching = jdbc.queryForObject("""
                     SELECT COUNT(*) FROM orders WHERE id = ? AND shop_id = ? AND payment_method = 'PAYOS'
                       AND payment_status = 'PAID' AND total_amount = ?
                     """, Integer.class, orderId, shopId, amount);
-            return matching != null && matching > 0;
+            paid = matching != null && matching > 0;
         }
-        return true;
+        if (paid) wallet.recordPaidOrder(orderId, shopId, reference, null);
+        return paid;
     }
 
     private void cancelAndRestore(long orderId) {

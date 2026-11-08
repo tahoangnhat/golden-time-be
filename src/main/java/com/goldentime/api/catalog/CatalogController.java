@@ -56,7 +56,7 @@ public class CatalogController {
             @RequestParam(defaultValue = "10") double radiusKm) {
         if ((lat == null) != (lng == null)) throw ApiException.badRequest("Cần truyền đồng thời lat và lng.");
         List<ShopSummary> shops = jdbc.query("""
-                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.rating_avg, s.review_count,
+                SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.rating_avg, s.review_count AS rating_count,
                        s.description, s.popular_fruit, COUNT(DISTINCT p.id) AS product_count
                 FROM shops s
                 LEFT JOIN shop_products p ON p.shop_id = s.id AND p.status = 'ON_SALE'
@@ -68,7 +68,7 @@ public class CatalogController {
             double shopLng = rs.getDouble("longitude");
             Double distance = lat == null ? null : distanceKm(lat, lng, shopLat, shopLng);
             return new ShopSummary(rs.getLong("id"), rs.getString("name"), rs.getString("address"), shopLat, shopLng,
-                    rs.getBigDecimal("rating_avg"), rs.getInt("review_count"), rs.getString("description"),
+                    rs.getBigDecimal("rating_avg"), rs.getInt("rating_count"), rs.getString("description"),
                     rs.getString("popular_fruit"), rs.getInt("product_count"), distance);
         });
         if (lat == null) return shops;
@@ -184,7 +184,7 @@ public class CatalogController {
                               BigDecimal sugarG, BigDecimal potassiumMg, BigDecimal waterPercent,
                               String healthBenefits, String servingNote, String personalizedTip) {}
     public record ShopSummary(long id, String name, String address, double latitude, double longitude,
-                              BigDecimal rating, int reviewCount, String description, String popularFruit,
+                              BigDecimal rating, int ratingCount, String description, String popularFruit,
                               int productCount, Double distanceKm) {}
     public record ProductCard(long id, long shopId, String shopName, String shopAddress, Long fruitId, String fruitSlug,
                               String fruitName, String emoji, String category, String displayName,

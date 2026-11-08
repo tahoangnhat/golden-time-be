@@ -381,18 +381,6 @@ public class PartnerDataController {
                 .toList();
     }
 
-    @GetMapping("/reviews")
-    public List<ShopReview> reviews(Authentication authentication) {
-        long shopId = shopId(CurrentUser.id(authentication));
-        return jdbc.query("""
-                SELECT r.id, u.full_name AS author, r.rating, r.comment, r.created_at,
-                       (r.order_id IS NOT NULL) AS purchased
-                FROM reviews r JOIN users u ON u.id = r.user_id WHERE r.shop_id = ?
-                ORDER BY r.created_at DESC, r.id DESC
-                """, (rs, row) -> new ShopReview(rs.getLong("id"), rs.getString("author"), rs.getInt("rating"),
-                rs.getString("comment"), rs.getTimestamp("created_at").toInstant(), rs.getBoolean("purchased")), shopId);
-    }
-
     @GetMapping("/product-reviews")
     public List<ShopProductReviewRow> productReviews(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
@@ -440,10 +428,10 @@ public class PartnerDataController {
                        (SELECT COUNT(*) FROM orders WHERE shop_id = ?) AS orders,
                        (SELECT COUNT(*) FROM orders WHERE shop_id = ? AND status = 'PENDING') AS pending_orders,
                        (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE shop_id = ? AND status <> 'CANCELLED' AND created_at::date = CURRENT_DATE) AS order_value_today,
-                       (SELECT COALESCE(AVG(rating), 0) FROM reviews WHERE shop_id = ?) AS rating,
-                       (SELECT COUNT(*) FROM reviews WHERE shop_id = ?) AS review_count
+                       (SELECT COALESCE(AVG(shop_rating), 0) FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL) AS rating,
+                       (SELECT COUNT(*) FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL) AS rating_count
                 """, (rs, row) -> new ShopCounts(rs.getInt("products"), rs.getInt("sold_out"), rs.getInt("orders"),
-                rs.getInt("pending_orders"), rs.getLong("order_value_today"), rs.getBigDecimal("rating"), rs.getInt("review_count")),
+                rs.getInt("pending_orders"), rs.getLong("order_value_today"), rs.getBigDecimal("rating"), rs.getInt("rating_count")),
                 shopId, shopId, shopId, shopId, shopId, shopId, shopId);
         List<DailyMetric> daily = jdbc.query("""
                 SELECT d.day::date AS day, COALESCE((SELECT SUM(o.total_amount) FROM orders o
@@ -459,13 +447,13 @@ public class PartnerDataController {
                 WHERE p.shop_id = ? GROUP BY p.id, p.display_name ORDER BY sold DESC LIMIT 5
                 """, (rs, row) -> new TopProduct(rs.getString("name"), rs.getBigDecimal("sold"), rs.getLong("order_value")), shopId);
         return new ShopOverview(counts.products(), counts.soldOut(), counts.orders(), counts.pendingOrders(),
-                counts.orderValueToday(), counts.rating(), counts.reviewCount(), daily, topProducts);
+                counts.orderValueToday(), counts.rating(), counts.ratingCount(), daily, topProducts);
     }
 
     private ShopProfile shop(long userId) {
         List<ShopProfile> shops = jdbc.query("""
                 SELECT s.id, s.name, s.address, s.latitude, s.longitude, s.google_place_id, s.status,
-                       s.description, s.rating_avg, s.review_count, s.business_email, s.business_phone,
+                       s.description, s.rating_avg, s.review_count AS rating_count, s.business_email, s.business_phone,
                        s.tax_code, s.representative_name, s.representative_phone, s.logo_url, s.pickup_address,
                        s.pickup_province_name, s.pickup_ward_name
                 FROM shops s LEFT JOIN users u ON u.id = ?
@@ -473,7 +461,7 @@ public class PartnerDataController {
                 ORDER BY s.id LIMIT 1
                 """, (rs, row) -> new ShopProfile(rs.getLong("id"), rs.getString("name"), rs.getString("address"),
                 rs.getDouble("latitude"), rs.getDouble("longitude"), rs.getString("google_place_id"), rs.getString("status"),
-                rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("review_count"),
+                rs.getString("description"), rs.getBigDecimal("rating_avg"), rs.getInt("rating_count"),
                 rs.getString("business_email"), rs.getString("business_phone"), rs.getString("tax_code"),
                 rs.getString("representative_name"), rs.getString("representative_phone"), rs.getString("logo_url"),
                 rs.getString("pickup_address"), rs.getString("pickup_province_name"), rs.getString("pickup_ward_name")), userId, userId);
@@ -505,7 +493,7 @@ public class PartnerDataController {
     }
 
     public record ShopProfile(long id, String name, String address, double latitude, double longitude,
-                              String googlePlaceId, String status, String description, BigDecimal rating, int reviewCount,
+                              String googlePlaceId, String status, String description, BigDecimal rating, int ratingCount,
                               String businessEmail, String businessPhone, String taxCode,
                               String representativeName, String representativePhone, String logoUrl,
                               String pickupAddress, String pickupProvinceName, String pickupWardName) {}
@@ -559,7 +547,6 @@ public class PartnerDataController {
         }
     }
     private record ShipmentOrder(String status, String paymentMethod, String paymentStatus) {}
-    public record ShopReview(long id, String author, int rating, String comment, Instant createdAt, boolean purchased) {}
     public record ShopProductReviewRow(long id, long productId, String productName, String author, int rating,
                                        String comment, Instant createdAt) {}
     public record ShopTrace(String batchCode, String product, String origin, String supplier, boolean certified,
@@ -568,7 +555,7 @@ public class PartnerDataController {
     public record DailyMetric(LocalDate date, long orderValue) {}
     public record TopProduct(String name, BigDecimal sold, long orderValue) {}
     public record ShopOverview(int products, int soldOut, int orders, int pendingOrders, long orderValueToday,
-                               BigDecimal rating, int reviewCount, List<DailyMetric> daily, List<TopProduct> topProducts) {}
+                               BigDecimal rating, int ratingCount, List<DailyMetric> daily, List<TopProduct> topProducts) {}
     private record ShopCounts(int products, int soldOut, int orders, int pendingOrders, long orderValueToday,
-                              BigDecimal rating, int reviewCount) {}
+                              BigDecimal rating, int ratingCount) {}
 }

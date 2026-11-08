@@ -13,6 +13,8 @@ import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -127,7 +129,7 @@ public class OrderController {
         if ("PAYOS".equals(payment)) {
             Instant expiresAt = Instant.now().plus(Duration.ofMinutes(paymentLinkExpiryMinutes));
             String baseUrl = frontendUrl.replaceAll("/+$", "");
-            String returnUrl = baseUrl + "/cart";
+            String returnUrl = baseUrl + "/shop";
             String cancelUrl = baseUrl + "/cart";
             String encodedOrder = Long.toString(orderId, 36).toUpperCase(Locale.ROOT);
             String description = "G" + encodedOrder.substring(Math.max(0, encodedOrder.length() - 8));
@@ -146,7 +148,7 @@ public class OrderController {
         long userId = CurrentUser.id(authentication);
         return jdbc.query("""
                 SELECT o.id, o.shop_id, s.name AS shop_name, o.status, o.total_amount,
-                       o.payment_method, o.payment_status, o.created_at, COUNT(oi.id) AS item_count,
+                       o.payment_method, o.payment_status, o.created_at, o.shop_rating, COUNT(oi.id) AS item_count,
                        sh.carrier_order_code, sh.carrier_status, sh.expected_delivery_at
                 FROM orders o JOIN shops s ON s.id = o.shop_id
                 LEFT JOIN order_items oi ON oi.order_id = o.id
@@ -159,12 +161,48 @@ public class OrderController {
                 rs.getString("payment_method"), rs.getString("payment_status"),
                 rs.getTimestamp("created_at").toInstant(), rs.getInt("item_count"), rs.getString("carrier_order_code"),
                 rs.getString("carrier_status"), rs.getTimestamp("expected_delivery_at") == null ? null
-                        : rs.getTimestamp("expected_delivery_at").toInstant()), userId);
+                        : rs.getTimestamp("expected_delivery_at").toInstant(), (Integer) rs.getObject("shop_rating")), userId);
     }
 
     @GetMapping("/{id}")
     public OrderDetail get(@PathVariable long id, Authentication authentication) {
         return detail(id, CurrentUser.id(authentication));
+    }
+
+    @PostMapping("/{id}/rating")
+    @Transactional
+    public OrderRatingResponse rateOrder(@PathVariable long id, @Valid @RequestBody RateOrderRequest request,
+                                         Authentication authentication) {
+        long userId = CurrentUser.id(authentication);
+        List<RatingOrder> matchingOrders = jdbc.query("""
+                SELECT shop_id, status, shop_rating
+                FROM orders WHERE id = ? AND user_id = ? FOR UPDATE
+                """, (rs, row) -> new RatingOrder(rs.getLong("shop_id"), rs.getString("status"),
+                (Integer) rs.getObject("shop_rating")), id, userId);
+        if (matchingOrders.isEmpty()) throw ApiException.notFound("Không tìm thấy đơn hàng.");
+
+        RatingOrder order = matchingOrders.get(0);
+        if (!"DELIVERED".equals(order.status())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Chỉ có thể chấm điểm sau khi xác nhận đã nhận hàng.");
+        }
+        if (order.rating() != null) {
+            throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng này đã được chấm điểm.");
+        }
+
+        int updated = jdbc.update("""
+                UPDATE orders SET shop_rating = ?
+                WHERE id = ? AND user_id = ? AND status = 'DELIVERED' AND shop_rating IS NULL
+                """, request.rating(), id, userId);
+        if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi. Vui lòng tải lại.");
+
+        jdbc.update("""
+                UPDATE shops SET
+                    rating_avg = (SELECT COALESCE(ROUND(AVG(shop_rating)::numeric, 2), 0)
+                                  FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL),
+                    review_count = (SELECT COUNT(*) FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL)
+                WHERE id = ?
+                """, order.shopId(), order.shopId(), order.shopId());
+        return new OrderRatingResponse(id, request.rating());
     }
 
     @PostMapping("/{id}/sync-payment")
@@ -297,6 +335,9 @@ public class OrderController {
                               Instant expectedDeliveryAt, List<OrderItem> items) {}
     public record OrderSummary(long id, long shopId, String shopName, String status, long total,
                                String paymentMethod, String paymentStatus, Instant createdAt, int itemCount,
-                               String trackingCode, String carrierStatus, Instant expectedDeliveryAt) {}
+                               String trackingCode, String carrierStatus, Instant expectedDeliveryAt, Integer shopRating) {}
+    public record RateOrderRequest(@Min(1) @Max(5) int rating) {}
+    public record OrderRatingResponse(long orderId, int rating) {}
+    private record RatingOrder(long shopId, String status, Integer rating) {}
     public record ReceiptConfirmation(boolean walletCredited) {}
 }
