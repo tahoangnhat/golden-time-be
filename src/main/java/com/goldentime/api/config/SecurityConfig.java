@@ -62,6 +62,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/shop/**").hasRole("SHOP_OWNER")
                         .requestMatchers("/api/auth/me").authenticated()
+                        .requestMatchers("/api/premium/**").hasRole("USER")
                         .requestMatchers("/api/shipping/**").authenticated()
                         .requestMatchers("/api/scans", "/api/scans/**", "/api/orders", "/api/orders/**", "/api/reviews", "/api/reviews/**").hasRole("USER")
                         .requestMatchers("/api/buyer/**").hasRole("USER")

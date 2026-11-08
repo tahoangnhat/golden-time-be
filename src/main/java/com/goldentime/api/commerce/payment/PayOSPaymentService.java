@@ -3,6 +3,7 @@ package com.goldentime.api.commerce.payment;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.goldentime.api.commerce.voucher.VoucherService;
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.premium.PremiumService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -20,14 +21,16 @@ public class PayOSPaymentService {
     private final PayOSClient payOS;
     private final TransactionTemplate transactions;
     private final VoucherService voucherService;
+    private final PremiumService premiumService;
 
     public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS,
                                org.springframework.transaction.PlatformTransactionManager transactionManager,
-                               VoucherService voucherService) {
+                               VoucherService voucherService, PremiumService premiumService) {
         this.jdbc = jdbc;
         this.payOS = payOS;
         this.transactions = new TransactionTemplate(transactionManager);
         this.voucherService = voucherService;
+        this.premiumService = premiumService;
     }
 
     public PayOSClient.PaymentLink createPaymentLink(long orderCode, long amount, String description,
@@ -45,6 +48,7 @@ public class PayOSPaymentService {
         long orderCode = data.path("orderCode").asLong(-1);
         long amount = data.path("amount").asLong(-1);
         if (orderCode <= 0 || amount < 0) return true;
+        if (premiumService.handlePayOSPayment(orderCode, amount, data.path("reference").asText(null), data.path("paymentLinkId").asText(null))) return true;
         List<Long> shopIds = jdbc.query("SELECT shop_id FROM orders WHERE id = ? AND payment_method = 'PAYOS'", (rs, row) -> rs.getLong(1), orderCode);
         if (shopIds.isEmpty()) return true;
         long shopId = shopIds.get(0);

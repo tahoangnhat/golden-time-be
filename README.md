@@ -24,6 +24,11 @@ $env:MAIL_USERNAME = "<tài khoản SMTP>"
 $env:MAIL_PASSWORD = "<mật khẩu ứng dụng SMTP>"
 $env:MAIL_FROM = "<địa chỉ gửi email>"
 $env:BUSINESS_PORTAL_URL = "http://localhost:8080/business/login"
+$env:FRONTEND_BASE_URL = "http://localhost:8080"
+$env:GEMINI_API_KEY = "<API key của project Gemini đã bật billing, chỉ cấu hình ở backend>"
+$env:PREMIUM_HEALTH_ENCRYPTION_KEY = "<khóa Base64 32 byte đã lưu cố định>"
+# Optional; mặc định gemini-3.1-flash-lite
+$env:GEMINI_MODEL = "gemini-3.1-flash-lite"
 $env:GHN_TOKEN = "<token GHN của môi trường đang dùng>"
 $env:GHN_SHOP_ID = "<Shop ID GHN>"
 $env:GHN_WEBHOOK_SECRET = "<chuỗi bí mật tự tạo>"
@@ -74,6 +79,8 @@ Hồ sơ đối tác lưu địa chỉ và tọa độ đã chọn. Admin kiểm
 - Admin xác minh Farm tại `/api/admin/farms` và `/api/admin/farms/{id}/decision`. Batch mới phải kèm ít nhất một ảnh bằng chứng, bắt đầu ở trạng thái `PENDING_REVIEW`, và chỉ Farm `APPROVED` thuộc Shop hiện tại mới được chọn. Admin xem hàng chờ tại `/api/admin/traceability/review-queue`, xác minh hoặc yêu cầu sửa tại `/api/admin/traceability/{batchCode}/decision`; khi Business gửi lại hồ sơ, bằng chứng được lưu thành phiên bản mới. QR và dữ liệu truy xuất công khai chỉ có hiệu lực khi Batch ở trạng thái `VERIFIED`. Trạng thái vận hành riêng có thể cập nhật tại `/api/admin/traceability/{batchCode}/status` sau xác minh.
 - Customer tra cứu mã tại `/api/trace/{batchCode}` hoặc mở `/trace?batchCode=...`; lô chưa xác minh không được trả dữ liệu công khai. Response đã xác minh có Product, Farm, Business, kiểm định, đóng gói, vận chuyển và timeline. Business chỉ hiển thị QR sau khi Admin xác minh.
 - `GET /api/updates`
+- Premium: `GET /api/premium/status`, `POST /api/premium/payments`, `GET /api/premium/payments/{orderCode}`, `GET/PUT/DELETE /api/premium/health-profile`, `POST /api/premium/recommendations` (yêu cầu tài khoản USER; tạo/sửa hồ sơ mới và nhận gợi ý cần Premium còn hạn; hồ sơ đã lưu vẫn sửa/xóa được sau khi hết hạn).
+- Admin cấu hình giá Premium tại `GET/PUT /api/admin/premium-settings` (chỉ ADMIN). Đặt giá `0` để tạm ngừng bán; không có giá mặc định.
 
 Login/register cấp access token 15 phút trong JSON và refresh token 14 ngày trong cookie `HttpOnly`; FE tự làm mới access token khi gặp 401 rồi thử lại request một lần. Logout thu hồi refresh token. Mỗi endpoint riêng tư yêu cầu JWT và backend lấy user id từ token, không nhận user id do FE tự truyền. API đọc danh mục/cửa hàng/bài viết công khai vẫn không cần đăng nhập. Mỗi đơn chỉ chứa sản phẩm từ một cửa hàng. Đánh giá cần kèm một `orderId` hoặc `scanId` của chính người dùng.
 
@@ -84,6 +91,19 @@ Thời hạn có thể chỉnh bằng `JWT_ACCESS_TOKEN_MINUTES` và `JWT_REFRES
 - Không có tài khoản, shop, sản phẩm, bài viết, đánh giá, lượt quét hay hồ sơ truy xuất mẫu trong cơ sở dữ liệu sau khi migration V4 chạy. Trái cây dùng làm danh mục tra cứu; dữ liệu dinh dưỡng được để trống cho tới khi có nguồn thật.
 - Giá Bách Hóa Xanh và WinMart chỉ xuất hiện sau khi crawler đọc được giá từ các trang đã cấu hình. Backend lưu thời điểm, URL nguồn và lỗi crawl; khi crawl thất bại API không tạo giá thay thế.
 - `AI_SERVICE_URL` trống thì quét ảnh trả lỗi “chưa cấu hình dịch vụ phân tích ảnh”. Khi kết nối, endpoint AI nhận `multipart/form-data` field `file` và cần trả JSON gồm `fruitName`, `qualityScore`, `freshnessScore`, `ripenessLabel`, `sweetnessLabel`, `useWithin`, `qualityWarning`, `suggestion`, `confidence`. Có thể dùng `AI_SERVICE_API_KEY` cho Bearer token.
+- Gói Premium dùng PayOS hiện có; đặt `PAYOS_CLIENT_ID`, `PAYOS_API_KEY`, `PAYOS_CHECKSUM_KEY` và `PAYOS_WEBHOOK_URL` ở backend. `FRONTEND_BASE_URL` phải là origin website thật để đường trả về PayOS mở đúng trang `/premium`. Chỉ cấp 30 ngày sau webhook PayOS hợp lệ; mua thêm khi đang còn hạn sẽ cộng 30 ngày từ hạn hiện tại.
+- Admin đặt giá tại **Cài đặt hệ thống → Gói Premium**. Người dùng nhập hồ sơ tùy chọn gồm nhóm tuổi, chiều cao, cân nặng, dị ứng, bệnh nền, thuốc và mục tiêu. Hồ sơ chỉ lưu khi họ bật đồng ý lưu; có thể sửa/xóa tại trang Premium. Đồng ý lưu hồ sơ và đồng ý gửi dữ liệu tới AI là hai lựa chọn riêng.
+- Gợi ý chỉ chọn sản phẩm đang bán, còn hàng; quy tắc lọc từ khóa dị ứng đã khai báo và xếp hạng theo dữ liệu dinh dưỡng/mục tiêu. Khi người dùng đồng ý cho AI, backend gửi các trường hồ sơ đã nhập cùng dữ liệu sản phẩm tới Gemini Interactions API; không gửi tên, email hay ID tài khoản. Mọi trường đều có thể bỏ trống. Yêu cầu đặt `store=false` để không lưu tương tác trên API. Chỉ cấu hình API key từ project đã bật billing; Google cho biết nội dung API trả phí không được dùng để cải thiện sản phẩm. Nếu không có `GEMINI_API_KEY` hoặc dịch vụ AI lỗi, hệ thống trả gợi ý theo quy tắc.
+- Hồ sơ sức khỏe được mã hóa AES-GCM trong cơ sở dữ liệu. Trong Windows PowerShell, tạo khóa một lần bằng lệnh sau rồi lưu giá trị được in ra vào Environment/Secrets backend:
+  ```powershell
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $bytes = New-Object byte[] 32
+  $rng.GetBytes($bytes)
+  [Convert]::ToBase64String($bytes)
+  $rng.Dispose()
+  ```
+  Giữ nguyên khóa lâu dài. Không tạo lại khóa sau khi đã có hồ sơ, vì mất khóa sẽ khiến không thể đọc lại hồ sơ đã lưu. Có thể bỏ trống khóa nếu chỉ dùng gợi ý theo phiên và không lưu hồ sơ.
+- Kết quả Premium là tham khảo dinh dưỡng, không chẩn đoán/điều trị và không xác nhận tương tác thuốc hay an toàn dị ứng. Bộ lọc dị ứng chỉ so khớp từ khóa nên người dùng vẫn cần kiểm tra với chuyên gia và cửa hàng.
 - Đơn đặt hàng giữ tồn kho ngay khi tạo; phí GHN được báo giá ở checkout và Business tạo vận đơn trước khi đơn chuyển sang `IN_TRANSIT`. Khách xem mã vận đơn/trạng thái GHN và xác nhận đã nhận hàng để hoàn tất. Doanh thu chỉ ghi vào ví sau khi khách xác nhận nhận và khoản thanh toán đã được đối soát; COD được đối soát từ callback chuyển tiền của GHN.
 - Bản đồ dùng Leaflet để hiển thị bản đồ đường phố OpenStreetMap, vị trí người dùng và các cửa hàng đã tìm được quanh đó.
 - Khuyến mãi, chính sách cửa hàng, phí nền tảng và giờ hoạt động chưa có API/schema.
