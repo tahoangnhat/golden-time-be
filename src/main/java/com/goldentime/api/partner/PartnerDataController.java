@@ -7,6 +7,8 @@ import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -32,6 +34,7 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 
 /** Partner views sourced from the authenticated shop owner's records. */
@@ -152,7 +155,7 @@ public class PartnerDataController {
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
         validateApprovedTraceFarm(shopId, request.farmId());
-        validateTraceDates(request.orderDate(), request.transportDate(), request.receivedDate());
+        LocalDate estimatedReceivedDate = validateTraceDates(request.orderDate(), request.transportDays(), request.receivedDate());
         String evidenceImageUrl = validateRequiredImageUrl(request.evidenceImageUrl(), "ảnh bằng chứng truy xuất nguồn gốc");
         List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
         String imageUrl = imageUrls.get(0);
@@ -164,7 +167,7 @@ public class PartnerDataController {
                 RETURNING id
                 """, Long.class, shopId, request.fruitId(), request.category(),
                 "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()), request.displayName().trim(), request.pricePerKg(),
-                request.stockKg(), imageUrl, request.farmId(), request.orderDate(), request.transportDate(), request.receivedDate(), evidenceImageUrl);
+                request.stockKg(), imageUrl, request.farmId(), request.orderDate(), estimatedReceivedDate, request.receivedDate(), evidenceImageUrl);
         saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
     }
@@ -177,7 +180,7 @@ public class PartnerDataController {
         validateProductCategory(request.category());
         if (request.fruitId() != null) validateFruit(request.fruitId());
         validateApprovedTraceFarm(shopId, request.farmId());
-        validateTraceDates(request.orderDate(), request.transportDate(), request.receivedDate());
+        LocalDate estimatedReceivedDate = validateTraceDates(request.orderDate(), request.transportDays(), request.receivedDate());
         String evidenceImageUrl = validateRequiredImageUrl(request.evidenceImageUrl(), "ảnh bằng chứng truy xuất nguồn gốc");
         List<String> imageUrls = validateProductImageUrls(request.imageUrls(), request.imageUrl());
         String imageUrl = imageUrls.get(0);
@@ -192,7 +195,7 @@ public class PartnerDataController {
                 WHERE id = ? AND shop_id = ?
                 """, request.fruitId(), request.category(), "SEASONAL".equals(request.category()), "PREPARED".equals(request.category()),
                 request.displayName().trim(), request.pricePerKg(), request.stockKg(), imageUrl,
-                request.farmId(), request.orderDate(), request.transportDate(), request.receivedDate(), evidenceImageUrl, productId, shopId);
+                request.farmId(), request.orderDate(), estimatedReceivedDate, request.receivedDate(), evidenceImageUrl, productId, shopId);
         if (updated != 1) throw ApiException.notFound("Không tìm thấy sản phẩm của cửa hàng.");
         saveProductImages(productId, imageUrls);
         return shopProduct(shopId, productId);
@@ -237,13 +240,24 @@ public class PartnerDataController {
         }
     }
 
-    private void validateTraceDates(LocalDate orderDate, LocalDate transportDate, LocalDate receivedDate) {
-        if (orderDate == null || transportDate == null || receivedDate == null) {
-            throw ApiException.badRequest("Hãy nhập ngày đặt hàng, ngày vận chuyển và ngày nhận hàng.");
+    private LocalDate validateTraceDates(LocalDate orderDate, Integer transportDays, LocalDate receivedDate) {
+        if (orderDate == null || transportDays == null || receivedDate == null) {
+            throw ApiException.badRequest("Hãy nhập ngày đặt hàng, thời gian vận chuyển và ngày nhận hàng.");
         }
-        if (transportDate.isBefore(orderDate) || receivedDate.isBefore(transportDate)) {
-            throw ApiException.badRequest("Ngày vận chuyển phải từ ngày đặt hàng và ngày nhận hàng phải từ ngày vận chuyển.");
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+        if (!orderDate.isBefore(today)) {
+            throw ApiException.badRequest("Ngày đặt hàng phải nằm trong quá khứ.");
         }
+        if (transportDays < 1 || transportDays > 3650) {
+            throw ApiException.badRequest("Thời gian vận chuyển phải từ 1 đến 3650 ngày.");
+        }
+        if (receivedDate.isAfter(today)) {
+            throw ApiException.badRequest("Ngày nhận hàng không được ở tương lai.");
+        }
+        if (receivedDate.isBefore(orderDate)) {
+            throw ApiException.badRequest("Ngày nhận hàng không thể trước ngày đặt hàng.");
+        }
+        return orderDate.plusDays(transportDays);
     }
 
     private String validateProductImageUrl(String imageUrl) {
@@ -489,7 +503,7 @@ public class PartnerDataController {
                                    @NotNull @DecimalMin("0.00") @Digits(integer = 8, fraction = 2) BigDecimal stockKg,
                                    @NotNull @Positive Long farmId,
                                    @NotNull LocalDate orderDate,
-                                   @NotNull LocalDate transportDate,
+                                   @NotNull @Min(1) @Max(3650) Integer transportDays,
                                    @NotNull LocalDate receivedDate,
                                    @NotBlank @Size(max = 1024) String evidenceImageUrl,
                                    @NotNull Boolean onSale,
