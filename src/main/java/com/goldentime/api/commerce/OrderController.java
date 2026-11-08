@@ -167,6 +167,13 @@ public class OrderController {
         return detail(id, CurrentUser.id(authentication));
     }
 
+    @PostMapping("/{id}/sync-payment")
+    public OrderDetail syncPayment(@PathVariable long id, Authentication authentication) {
+        long userId = CurrentUser.id(authentication);
+        payments.syncPendingOrder(id, userId);
+        return detail(id, userId);
+    }
+
     @PostMapping("/{id}/confirm-received")
     @Transactional
     public ReceiptConfirmation confirmReceived(@PathVariable long id, Authentication authentication) {

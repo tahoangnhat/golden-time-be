@@ -88,6 +88,28 @@ public class PayOSPaymentService {
         cancelAndRestore(orderId);
     }
 
+    /**
+     * Reconcile the provider's payment state when a buyer returns from PayOS.
+     * The browser return parameters are not trusted; only the server-to-server
+     * status response can mark an order as paid.
+     */
+    public void syncPendingOrder(long orderId, long userId) {
+        PaymentOrder order = findOrder(orderId, userId);
+        if (!"PAYOS".equals(order.paymentMethod())) {
+            throw new ApiException(HttpStatus.CONFLICT, "Đơn hàng không sử dụng PayOS.");
+        }
+        if (!"PENDING".equals(order.paymentStatus())) return;
+
+        PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(orderId);
+        if (isPaid(remote, order.totalAmount())) {
+            markPaid(orderId, order.shopId(), remote.amountPaid(), null, null);
+        } else if (remote.amountPaid() == 0 && isClosed(remote.status())) {
+            cancelAndRestore(orderId);
+        } else if ("PAID".equals(remote.status())) {
+            log.warn("PayOS báo PAID nhưng số tiền không khớp đơn hàng {}. Giữ nguyên trạng thái để đối soát.", orderId);
+        }
+    }
+
     @Scheduled(fixedDelayString = "${app.payment.payos.expiry-scan-ms:60000}")
     public void cancelExpiredPendingOrders() {
         if (!payOS.isConfigured()) return;
