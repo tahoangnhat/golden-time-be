@@ -107,8 +107,8 @@ public class PremiumService {
         try {
             long expiresAtEpoch = expiresAt.getEpochSecond();
             link = payOS.createPaymentLink(orderCode, amount, "GoldenTime Premium",
-                    frontendUrl + "/premium?payment=cancelled&orderCode=" + orderCode,
-                    frontendUrl + "/premium?payment=returned&orderCode=" + orderCode,
+                    frontendUrl + "/profile?payment=cancelled&orderCode=" + orderCode,
+                    frontendUrl + "/profile?payment=returned&orderCode=" + orderCode,
                     expiresAtEpoch);
         } catch (RuntimeException exception) {
             jdbc.update("DELETE FROM premium_payments WHERE order_code = ? AND status = 'PENDING'", orderCode);
