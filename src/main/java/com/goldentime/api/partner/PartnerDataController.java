@@ -3,6 +3,7 @@ package com.goldentime.api.partner;
 import com.goldentime.api.articles.ArticleImageStorage;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.commerce.shipping.GhnShippingService;
+import com.goldentime.api.notifications.NotificationService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -71,11 +72,14 @@ public class PartnerDataController {
     private final JdbcTemplate jdbc;
     private final ArticleImageStorage imageStorage;
     private final GhnShippingService shipping;
+    private final NotificationService notifications;
 
-    public PartnerDataController(JdbcTemplate jdbc, ArticleImageStorage imageStorage, GhnShippingService shipping) {
+    public PartnerDataController(JdbcTemplate jdbc, ArticleImageStorage imageStorage, GhnShippingService shipping,
+                                 NotificationService notifications) {
         this.jdbc = jdbc;
         this.imageStorage = imageStorage;
         this.shipping = shipping;
+        this.notifications = notifications;
     }
 
     @GetMapping("/profile")
@@ -352,6 +356,8 @@ public class PartnerDataController {
         int updated = jdbc.update("UPDATE orders SET status = 'IN_TRANSIT' WHERE id = ? AND shop_id = ? AND status IN ('PENDING', 'CONFIRMED')",
                 orderId, shopId);
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
+        notifications.notifyOrderBuyer(orderId, "ORDER_SHIPPED", "Đơn hàng đang được giao",
+                "Cửa hàng đã bàn giao đơn hàng #" + orderId + " cho đơn vị vận chuyển.", "/orders");
     }
 
     @GetMapping("/orders")

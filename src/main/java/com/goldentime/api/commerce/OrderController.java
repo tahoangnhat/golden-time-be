@@ -6,6 +6,7 @@ import com.goldentime.api.commerce.payment.WalletService;
 import com.goldentime.api.commerce.shipping.GhnShippingService;
 import com.goldentime.api.commerce.voucher.VoucherRecords;
 import com.goldentime.api.commerce.voucher.VoucherService;
+import com.goldentime.api.notifications.NotificationService;
 import com.goldentime.api.security.CurrentUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -42,11 +43,12 @@ public class OrderController {
     private final WalletService wallet;
     private final GhnShippingService shipping;
     private final VoucherService voucherService;
+    private final NotificationService notifications;
     private final String frontendUrl;
     private final int paymentLinkExpiryMinutes;
 
     public OrderController(JdbcTemplate jdbc, PayOSPaymentService payments, WalletService wallet,
-                           GhnShippingService shipping, VoucherService voucherService,
+                           GhnShippingService shipping, VoucherService voucherService, NotificationService notifications,
                            @Value("${app.payment.frontend-url:http://localhost:8080}") String frontendUrl,
                            @Value("${app.payment.payos.link-expiry-minutes:15}") int paymentLinkExpiryMinutes) {
         this.jdbc = jdbc;
@@ -54,6 +56,7 @@ public class OrderController {
         this.wallet = wallet;
         this.shipping = shipping;
         this.voucherService = voucherService;
+        this.notifications = notifications;
         this.frontendUrl = frontendUrl;
         this.paymentLinkExpiryMinutes = paymentLinkExpiryMinutes;
     }
@@ -140,6 +143,9 @@ public class OrderController {
                         payment_expires_at = ? WHERE id = ?
                     """, link.paymentLinkId(), link.checkoutUrl(), link.qrCode(), Timestamp.from(expiresAt), orderId);
         }
+        notifications.createForUser(userId, "ORDER_CREATED", "Đặt hàng thành công", "Đơn hàng #" + orderId + " đã được tạo.", "/orders");
+        notifications.createForShopOwner(shopId, "NEW_ORDER", "Bạn có đơn hàng mới", "Đơn hàng #" + orderId + " vừa được đặt.", "/business/orders");
+        notifications.createForRole("ADMIN", "NEW_ORDER", "Có đơn hàng mới", "Đơn hàng #" + orderId + " vừa được tạo.", "/admin/orders");
         return detail(orderId, userId);
     }
 
@@ -231,6 +237,8 @@ public class OrderController {
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái đơn hàng vừa thay đổi.");
         voucherService.markVoucherUsed(id);
         boolean walletCredited = wallet.recordPaidOrder(id, order.shopId(), order.paymentReference(), null);
+        notifications.notifyOrderBuyer(id, "ORDER_DELIVERED", "Đơn hàng đã giao", "Bạn đã xác nhận nhận đơn hàng #" + id + ".", "/orders");
+        notifications.createForShopOwner(order.shopId(), "ORDER_DELIVERED", "Đơn hàng đã giao", "Khách đã xác nhận nhận đơn hàng #" + id + ".", "/business/orders");
         return new ReceiptConfirmation(walletCredited);
     }
 

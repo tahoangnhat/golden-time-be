@@ -2,6 +2,7 @@ package com.goldentime.api.business;
 
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.articles.ArticleImageStorage;
+import com.goldentime.api.notifications.NotificationService;
 import org.springframework.core.io.Resource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -24,15 +25,17 @@ public class BusinessApplicationService {
     private final BusinessLicenseStorage licenseStorage;
     private final ArticleImageStorage imageStorage;
     private final BusinessDecisionMailer mailer;
+    private final NotificationService notifications;
 
     public BusinessApplicationService(JdbcTemplate jdbc, PasswordEncoder passwordEncoder,
                                       BusinessLicenseStorage licenseStorage, ArticleImageStorage imageStorage,
-                                      BusinessDecisionMailer mailer) {
+                                      BusinessDecisionMailer mailer, NotificationService notifications) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
         this.licenseStorage = licenseStorage;
         this.imageStorage = imageStorage;
         this.mailer = mailer;
+        this.notifications = notifications;
     }
 
     @Transactional
@@ -84,6 +87,8 @@ public class BusinessApplicationService {
                     email, normalizedPhone, normalizedAddress, normalizedPickupAddress, normalizedPickupProvince,
                     normalizedPickupWard, latitude, longitude, normalizedPlaceId,
                     passwordEncoder.encode(password), license.storedName(), license.originalName(), license.contentType(), logoUrl);
+            notifications.createForRole("ADMIN", "BUSINESS_APPLICATION", "Có hồ sơ doanh nghiệp mới",
+                    "“" + name + "” vừa gửi hồ sơ đăng ký và đang chờ duyệt.", "/admin/shops");
             return new ApplicationReceipt(id, "PENDING", Instant.now());
         } catch (DuplicateKeyException exception) {
             licenseStorage.delete(license.storedName());
@@ -139,6 +144,7 @@ public class BusinessApplicationService {
         }
 
         Long shopId = null;
+        Long businessUserId = null;
         if (approved) {
             Integer accountExists = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE LOWER(email) = ?", Integer.class, application.email());
             if (accountExists != null && accountExists > 0) throw new ApiException(HttpStatus.CONFLICT, "Email này đã được dùng cho một tài khoản khác.");
@@ -153,12 +159,12 @@ public class BusinessApplicationService {
                     submittedLongitude, submittedPlaceId, application.pickupAddress(), application.pickupProvinceName(),
                     application.pickupWardName(), application.email(), application.phone(), application.taxCode(),
                     application.contactName(), application.representativePhone(), application.logoUrl());
-            Long userId = jdbc.queryForObject("""
+            businessUserId = jdbc.queryForObject("""
                     INSERT INTO users (email, phone, password_hash, full_name, role, shop_id, enabled)
                     VALUES (?, ?, ?, ?, 'SHOP_OWNER', ?, TRUE) RETURNING id
                     """, Long.class, application.email(), application.phone(), application.passwordHash(),
                     application.contactName(), shopId);
-            jdbc.update("UPDATE shops SET owner_user_id = ? WHERE id = ?", userId, shopId);
+            jdbc.update("UPDATE shops SET owner_user_id = ? WHERE id = ?", businessUserId, shopId);
         }
 
         boolean notificationSent = mailer.sendDecision(application.email(), application.contactName(), application.businessName(), approved, normalizedReason);
@@ -171,6 +177,11 @@ public class BusinessApplicationService {
                 WHERE id = ?
                 """, status, approved ? null : normalizedReason, shopId, adminId, notificationSent,
                 application.address(), application.latitude(), application.longitude(), application.googlePlaceId(), id);
+        if (businessUserId != null) {
+            notifications.createForUser(businessUserId, "BUSINESS_APPROVED", "Hồ sơ doanh nghiệp đã được duyệt",
+                    "“" + application.businessName() + "” đã được kích hoạt. Bạn có thể đăng nhập cổng Business.",
+                    "/business/login");
+        }
         Instant reviewedAt = Instant.now();
         return new ApplicationSummary(id, application.businessName(), application.registrationNumber(), application.taxCode(),
                 application.contactName(), application.representativePhone(), application.email(), application.phone(), application.address(),

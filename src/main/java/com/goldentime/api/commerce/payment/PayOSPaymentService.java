@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.goldentime.api.commerce.voucher.VoucherService;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.premium.PremiumService;
+import com.goldentime.api.notifications.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -23,17 +24,19 @@ public class PayOSPaymentService {
     private final VoucherService voucherService;
     private final PremiumService premiumService;
     private final WalletService wallet;
+    private final NotificationService notifications;
 
     public PayOSPaymentService(JdbcTemplate jdbc, PayOSClient payOS,
                                org.springframework.transaction.PlatformTransactionManager transactionManager,
                                VoucherService voucherService, PremiumService premiumService,
-                               WalletService wallet) {
+                               WalletService wallet, NotificationService notifications) {
         this.jdbc = jdbc;
         this.payOS = payOS;
         this.transactions = new TransactionTemplate(transactionManager);
         this.voucherService = voucherService;
         this.premiumService = premiumService;
         this.wallet = wallet;
+        this.notifications = notifications;
     }
 
     public PayOSClient.PaymentLink createPaymentLink(long orderCode, long amount, String description,
@@ -183,6 +186,14 @@ public class PayOSPaymentService {
             paid = matching != null && matching > 0;
         }
         if (paid) wallet.recordPaidOrder(orderId, shopId, reference, null);
+        if (updated != null && updated > 0) {
+            notifications.notifyOrderBuyer(orderId, "PAYMENT_RECEIVED", "Thanh toán thành công",
+                    "PayOS đã xác nhận thanh toán cho đơn hàng #" + orderId + ".", "/orders");
+            notifications.createForShopOwner(shopId, "PAYMENT_RECEIVED", "Đơn hàng đã thanh toán",
+                    "PayOS đã xác nhận thanh toán cho đơn hàng #" + orderId + ".", "/business/orders");
+            notifications.createForRole("ADMIN", "PAYMENT_RECEIVED", "Đã nhận thanh toán PayOS",
+                    "Đơn hàng #" + orderId + " đã được thanh toán.", "/admin/orders");
+        }
         return paid;
     }
 

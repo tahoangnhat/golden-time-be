@@ -1,6 +1,7 @@
 package com.goldentime.api.trace;
 
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.notifications.NotificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -21,9 +22,11 @@ public class TraceabilityManagementService {
     private static final List<String> BATCH_STATUSES = List.of("IN_PROGRESS", "READY", "IN_TRANSIT", "DELIVERED", "RECALLED");
 
     private final JdbcTemplate jdbc;
+    private final NotificationService notifications;
 
-    public TraceabilityManagementService(JdbcTemplate jdbc) {
+    public TraceabilityManagementService(JdbcTemplate jdbc, NotificationService notifications) {
         this.jdbc = jdbc;
+        this.notifications = notifications;
     }
 
     @Transactional(readOnly = true)
@@ -51,6 +54,8 @@ public class TraceabilityManagementService {
                 request.managerName().trim(), request.phone().trim(), request.fruitTypes().trim(),
                 request.areaHectares(), optionalText(request.certifications()), certificationImageUrl, imageUrl);
         saveFarmImages(id, imageUrls);
+        notifications.createForRole("ADMIN", "FARM_REVIEW", "Có nông trại chờ xác minh",
+                "Shop #" + shopId + " vừa gửi nông trại “" + request.name().trim() + "”.", "/admin/farms");
         return farm(shopId, id);
     }
 
@@ -74,6 +79,8 @@ public class TraceabilityManagementService {
                 request.phone().trim(), request.fruitTypes().trim(), request.areaHectares(),
                 optionalText(request.certifications()), certificationImageUrl, imageUrl, farmId, shopId);
         saveFarmImages(farmId, imageUrls);
+        notifications.createForRole("ADMIN", "FARM_REVIEW", "Nông trại được gửi lại để xác minh",
+                "Shop #" + shopId + " đã cập nhật nông trại “" + request.name().trim() + "”.", "/admin/farms");
         return farm(shopId, farmId);
     }
 
@@ -117,6 +124,8 @@ public class TraceabilityManagementService {
         saveBatchEvidence(batchCode, 1, evidenceUrls);
         jdbc.update("UPDATE shop_products SET batch_code = ? WHERE id = ? AND shop_id = ?", batchCode, product.id(), shopId);
         refreshTimeline(batchCode, farm, request, product.shopName(), product.shopAddress());
+        notifications.createForRole("ADMIN", "BATCH_REVIEW", "Có lô trái cây chờ xác minh",
+                "Lô " + batchCode + " vừa được gửi để Admin kiểm tra.", "/admin/products");
         return batch(shopId, batchCode);
     }
 
@@ -155,6 +164,8 @@ public class TraceabilityManagementService {
         }
         jdbc.update("UPDATE shop_products SET batch_code = ? WHERE id = ? AND shop_id = ?", current.batchCode(), product.id(), shopId);
         refreshTimeline(current.batchCode(), farm, request, product.shopName(), product.shopAddress());
+        notifications.createForRole("ADMIN", "BATCH_REVIEW", "Lô trái cây được gửi lại để xác minh",
+                "Lô " + current.batchCode() + " đã được Business cập nhật.", "/admin/products");
         return batch(shopId, current.batchCode());
     }
 
@@ -191,6 +202,11 @@ public class TraceabilityManagementService {
                 WHERE id = ? AND status = 'PENDING'
                 """, approved ? "APPROVED" : "REJECTED", approved ? null : normalizedReason, adminId, farmId);
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Nông trại này vừa được một quản trị viên xử lý.");
+        notifications.createForShopOwner(current.shopId(), approved ? "FARM_APPROVED" : "FARM_REJECTED",
+                approved ? "Nông trại đã được xác minh" : "Nông trại cần được cập nhật",
+                approved ? "Nông trại “" + current.name() + "” đã được Admin duyệt."
+                        : "Nông trại “" + current.name() + "” bị từ chối: " + normalizedReason,
+                "/business/farms");
         return farmById(farmId);
     }
 
@@ -225,6 +241,13 @@ public class TraceabilityManagementService {
                 INSERT INTO trace_batch_reviews (batch_code, review_version, decision, note, reviewed_by)
                 VALUES (?, ?, ?, ?, ?)
                 """, current.batchCode(), current.reviewVersion(), decision, approved ? null : normalizedNote, adminId);
+        if (current.shopId() != null) {
+            notifications.createForShopOwner(current.shopId(), approved ? "BATCH_VERIFIED" : "BATCH_CORRECTION",
+                    approved ? "Lô trái cây đã được xác minh" : "Lô trái cây cần chỉnh sửa",
+                    approved ? "Lô " + current.batchCode() + " đã được Admin xác minh; thông tin truy xuất đã công khai."
+                            : "Lô " + current.batchCode() + " cần cập nhật: " + normalizedNote,
+                    "/business/products");
+        }
         return adminBatch(current.batchCode());
     }
 

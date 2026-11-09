@@ -1,6 +1,7 @@
 package com.goldentime.api.commerce.payment;
 
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.notifications.NotificationService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,13 +28,15 @@ import javax.crypto.spec.SecretKeySpec;
 @Service
 public class WalletService {
     private final JdbcTemplate jdbc;
+    private final NotificationService notifications;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Value("${app.wallet.account-encryption-key:}")
     private String accountEncryptionKey;
 
-    public WalletService(JdbcTemplate jdbc) {
+    public WalletService(JdbcTemplate jdbc, NotificationService notifications) {
         this.jdbc = jdbc;
+        this.notifications = notifications;
     }
 
     @Transactional
@@ -102,6 +105,8 @@ public class WalletService {
                 """, Long.class, shopId, amount, requiredText(bankCode), requiredText(bankName),
                 encryptAccountNumber(requiredText(accountNumber).replaceAll("\\s+", "")),
                 lastFour(requiredText(accountNumber).replaceAll("\\s+", "")), encryptAccountNumber(requiredText(accountName)), userId);
+        notifications.createForRole("ADMIN", "WITHDRAWAL_REQUEST", "Có yêu cầu rút tiền mới",
+                "Shop #" + shopId + " yêu cầu rút " + amount + "₫.", "/admin/wallets");
         return shopWithdrawalRequest(id, shopId);
     }
 
@@ -142,6 +147,8 @@ public class WalletService {
                 SET status = 'APPROVED', reviewed_by = ?, reviewed_at = NOW(), updated_at = NOW(), review_note = NULL
                 WHERE id = ?
                 """, adminUserId, requestId);
+        notifications.createForShopOwner(request.shopId(), "WITHDRAWAL_APPROVED", "Yêu cầu rút tiền đã duyệt",
+                "Yêu cầu rút " + request.amount() + "₫ đã được Admin duyệt.", "/business/wallet");
         return adminWithdrawalRequest(requestId);
     }
 
@@ -156,6 +163,8 @@ public class WalletService {
                 SET status = 'REJECTED', reviewed_by = ?, reviewed_at = NOW(), review_note = ?, updated_at = NOW()
                 WHERE id = ?
                 """, adminUserId, requiredText(reason), requestId);
+        notifications.createForShopOwner(request.shopId(), "WITHDRAWAL_REJECTED", "Yêu cầu rút tiền bị từ chối",
+                "Lý do: " + requiredText(reason), "/business/wallet");
         return adminWithdrawalRequest(requestId);
     }
 
@@ -176,6 +185,8 @@ public class WalletService {
                 SET status = 'PAID', paid_at = NOW(), transfer_reference = ?, transfer_note = ?, updated_at = NOW()
                 WHERE id = ?
                 """, requiredText(reference), blankToNull(note), requestId);
+        notifications.createForShopOwner(request.shopId(), "WITHDRAWAL_PAID", "Đã chuyển tiền rút",
+                "Admin đã xác nhận chuyển " + request.amount() + "₫ vào tài khoản doanh nghiệp.", "/business/wallet");
         return adminWithdrawalRequest(requestId);
     }
 
@@ -197,6 +208,10 @@ public class WalletService {
                 """, orderId);
         if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "Trạng thái thanh toán COD vừa thay đổi.");
         recordPaidOrder(orderId, order.shopId(), blankToNull(reference), adminUserId);
+        notifications.notifyOrderBuyer(orderId, "PAYMENT_RECEIVED", "Đã thu tiền đơn hàng",
+                "Thanh toán COD cho đơn hàng #" + orderId + " đã được ghi nhận.", "/orders");
+        notifications.createForShopOwner(order.shopId(), "PAYMENT_RECEIVED", "Đã đối soát đơn COD",
+                "Thanh toán cho đơn hàng #" + orderId + " đã được Admin xác nhận thu.", "/business/orders");
     }
 
     public List<WalletSummary> adminSummaries() {
