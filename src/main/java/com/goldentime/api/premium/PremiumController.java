@@ -57,4 +57,10 @@ public class PremiumController {
                                                             @RequestBody PremiumService.RecommendationRequest request) {
         return premium.recommend(CurrentUser.id(authentication), request);
     }
+
+    @PostMapping("/chat")
+    public PremiumService.ChatResponse chat(Authentication authentication,
+                                             @RequestBody PremiumService.ChatRequest request) {
+        return premium.chat(CurrentUser.id(authentication), request);
+    }
 }
