@@ -20,21 +20,35 @@ public class AdminPremiumSettingsController {
 
     @GetMapping
     public PremiumPriceSetting get() {
-        return jdbc.query("SELECT setting_value FROM platform_settings WHERE setting_key = 'premium_price_vnd'",
-                rs -> rs.next() ? new PremiumPriceSetting(parse(rs.getString(1))) : new PremiumPriceSetting(0));
+        return new PremiumPriceSetting(readPrice("premium_price_vnd"), readPrice("premium_annual_price_vnd"));
     }
 
     @PutMapping
     public PremiumPriceSetting update(@RequestBody PremiumPriceUpdate request) {
-        if (request == null || request.priceVnd() == null || request.priceVnd() < 0 || request.priceVnd() > 999_999_999L) {
-            throw ApiException.badRequest("Giá Premium phải nằm trong khoảng 0 đến 999.999.999 VND.");
+        if (request == null || !validPrice(request.priceVnd())
+                || (request.annualPriceVnd() != null && !validPrice(request.annualPriceVnd()))) {
+            throw ApiException.badRequest("Giá mỗi gói Premium phải nằm trong khoảng 0 đến 999.999.999 VND.");
         }
+        writePrice("premium_price_vnd", request.priceVnd());
+        if (request.annualPriceVnd() != null) writePrice("premium_annual_price_vnd", request.annualPriceVnd());
+        return get();
+    }
+
+    private long readPrice(String key) {
+        return jdbc.query("SELECT setting_value FROM platform_settings WHERE setting_key = ?",
+                rs -> rs.next() ? parse(rs.getString(1)) : 0L, key);
+    }
+
+    private void writePrice(String key, long amount) {
         jdbc.update("""
                 INSERT INTO platform_settings (setting_key, setting_value, updated_at)
-                VALUES ('premium_price_vnd', ?, NOW())
+                VALUES (?, ?, NOW())
                 ON CONFLICT (setting_key) DO UPDATE SET setting_value = EXCLUDED.setting_value, updated_at = NOW()
-                """, Long.toString(request.priceVnd()));
-        return new PremiumPriceSetting(request.priceVnd());
+                """, key, Long.toString(amount));
+    }
+
+    private static boolean validPrice(Long value) {
+        return value != null && value >= 0 && value <= 999_999_999L;
     }
 
     private static long parse(String value) {
@@ -42,6 +56,6 @@ public class AdminPremiumSettingsController {
         catch (NumberFormatException exception) { return 0; }
     }
 
-    public record PremiumPriceSetting(long priceVnd) {}
-    public record PremiumPriceUpdate(Long priceVnd) {}
+    public record PremiumPriceSetting(long priceVnd, long annualPriceVnd) {}
+    public record PremiumPriceUpdate(Long priceVnd, Long annualPriceVnd) {}
 }

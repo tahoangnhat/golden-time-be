@@ -27,8 +27,9 @@ public class PremiumController {
     }
 
     @PostMapping("/payments")
-    public PremiumService.PaymentInfo createPayment(Authentication authentication) {
-        return premium.createPayment(CurrentUser.id(authentication));
+    public PremiumService.PaymentInfo createPayment(Authentication authentication,
+                                                     @RequestBody(required = false) PremiumService.PaymentRequest request) {
+        return premium.createPayment(CurrentUser.id(authentication), request == null ? null : request.planCode());
     }
 
     @GetMapping("/payments/{orderCode}")

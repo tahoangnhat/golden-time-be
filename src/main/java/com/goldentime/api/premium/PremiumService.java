@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.goldentime.api.commerce.payment.PayOSClient;
 import com.goldentime.api.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,7 @@ import javax.crypto.spec.SecretKeySpec;
 
 @Service
 public class PremiumService {
+    private static final Logger log = LoggerFactory.getLogger(PremiumService.class);
     private static final String[] PROFILE_FIELDS = {
             "ageGroup", "heightCm", "weightKg", "allergies", "chronicConditions", "medications", "healthGoals"
     };
@@ -81,32 +84,37 @@ public class PremiumService {
         List<Instant> expiries = jdbc.query("SELECT expires_at FROM premium_memberships WHERE user_id = ?", (rs, row) -> rs.getTimestamp(1).toInstant(), userId);
         Instant expiresAt = expiries.isEmpty() ? null : expiries.get(0);
         HealthProfile profile = getHealthProfile(userId);
-        return new Overview(priceVnd(), payOS.isConfigured(), geminiConfigured,
+        return new Overview(priceVnd("MONTHLY"), priceVnd("YEARLY"), payOS.isConfigured(), geminiConfigured,
                 expiresAt != null && expiresAt.isAfter(Instant.now()), expiresAt, profile);
     }
 
-    public PaymentInfo createPayment(long userId) {
-        long amount = priceVnd();
-        if (amount <= 0) throw ApiException.unavailable("Gói Premium chưa được Admin cấu hình giá.");
+    public PaymentInfo createPayment(long userId, String requestedPlan) {
+        String planCode = normalizePlan(requestedPlan);
+        int durationDays = "YEARLY".equals(planCode) ? 365 : 30;
+        long amount = priceVnd(planCode);
+        if (amount <= 0) throw ApiException.unavailable("Gói Premium đã chọn chưa được Admin cấu hình giá.");
         if (!payOS.isConfigured()) throw ApiException.unavailable("Thanh toán PayOS hiện chưa được cấu hình.");
 
         List<PaymentInfo> pending = jdbc.query("""
-                SELECT order_code, amount_vnd, status, checkout_url, qr_code, expires_at
+                SELECT order_code, amount_vnd, status, checkout_url, qr_code, expires_at, plan_code, duration_days
                 FROM premium_payments
-                WHERE user_id = ? AND status = 'PENDING' AND expires_at > NOW() AND checkout_url IS NOT NULL
+                WHERE user_id = ? AND plan_code = ? AND status = 'PENDING' AND expires_at > NOW() AND checkout_url IS NOT NULL
                 ORDER BY created_at DESC LIMIT 1
                 """, (rs, row) -> new PaymentInfo(rs.getLong("order_code"), rs.getLong("amount_vnd"),
-                rs.getString("status"), rs.getString("checkout_url"), rs.getString("qr_code"), rs.getTimestamp("expires_at").toInstant(), null), userId);
+                rs.getString("status"), rs.getString("checkout_url"), rs.getString("qr_code"), rs.getTimestamp("expires_at").toInstant(), null,
+                rs.getString("plan_code"), rs.getInt("duration_days")), userId, planCode);
         if (!pending.isEmpty()) return pending.get(0);
 
         long orderCode = nextOrderCode();
         Instant expiresAt = Instant.now().plus(Duration.ofMinutes(paymentExpiryMinutes));
-        jdbc.update("INSERT INTO premium_payments (order_code, user_id, amount_vnd, expires_at) VALUES (?, ?, ?, ?)",
-                orderCode, userId, amount, java.sql.Timestamp.from(expiresAt));
+        jdbc.update("""
+                INSERT INTO premium_payments (order_code, user_id, amount_vnd, expires_at, plan_code, duration_days)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, orderCode, userId, amount, java.sql.Timestamp.from(expiresAt), planCode, durationDays);
         PayOSClient.PaymentLink link;
         try {
             long expiresAtEpoch = expiresAt.getEpochSecond();
-            link = payOS.createPaymentLink(orderCode, amount, "GoldenTime Premium",
+            link = payOS.createPaymentLink(orderCode, amount, "Premium " + ("YEARLY".equals(planCode) ? "1 nam" : "30 ngay"),
                     frontendUrl + "/profile?payment=cancelled&orderCode=" + orderCode,
                     frontendUrl + "/profile?payment=returned&orderCode=" + orderCode,
                     expiresAtEpoch);
@@ -118,7 +126,7 @@ public class PremiumService {
                 UPDATE premium_payments SET payment_link_id = ?, checkout_url = ?, qr_code = ?, updated_at = NOW()
                 WHERE order_code = ? AND status = 'PENDING'
                 """, link.paymentLinkId(), link.checkoutUrl(), link.qrCode(), orderCode);
-        return new PaymentInfo(orderCode, amount, "PENDING", link.checkoutUrl(), link.qrCode(), expiresAt, null);
+        return new PaymentInfo(orderCode, amount, "PENDING", link.checkoutUrl(), link.qrCode(), expiresAt, null, planCode, durationDays);
     }
 
     public PaymentInfo paymentStatus(long userId, long orderCode) {
@@ -138,20 +146,23 @@ public class PremiumService {
 
     private PaymentInfo loadPayment(long userId, long orderCode) {
         List<PaymentInfo> rows = jdbc.query("""
-                SELECT order_code, amount_vnd, status, checkout_url, qr_code, expires_at, paid_at
+                SELECT order_code, amount_vnd, status, checkout_url, qr_code, expires_at, paid_at, plan_code, duration_days
                 FROM premium_payments WHERE order_code = ? AND user_id = ?
                 """, (rs, row) -> new PaymentInfo(rs.getLong("order_code"), rs.getLong("amount_vnd"),
                 rs.getString("status"), rs.getString("checkout_url"), rs.getString("qr_code"),
-                rs.getTimestamp("expires_at").toInstant(), rs.getTimestamp("paid_at") == null ? null : rs.getTimestamp("paid_at").toInstant()), orderCode, userId);
+                rs.getTimestamp("expires_at").toInstant(), rs.getTimestamp("paid_at") == null ? null : rs.getTimestamp("paid_at").toInstant(),
+                rs.getString("plan_code"), rs.getInt("duration_days")), orderCode, userId);
         if (rows.isEmpty()) throw ApiException.notFound("Không tìm thấy thanh toán Premium.");
         return rows.get(0);
     }
 
     /** Called only after the shared PayOS webhook signature and success codes have been verified. */
     public boolean handlePayOSPayment(long orderCode, long amount, String reference, String paymentLinkId) {
-        List<Long> matches = jdbc.query("SELECT amount_vnd FROM premium_payments WHERE order_code = ?", (rs, row) -> rs.getLong(1), orderCode);
+        List<PaymentTerms> matches = jdbc.query("SELECT amount_vnd, duration_days FROM premium_payments WHERE order_code = ?",
+                (rs, row) -> new PaymentTerms(rs.getLong("amount_vnd"), rs.getInt("duration_days")), orderCode);
         if (matches.isEmpty()) return false;
-        long expectedAmount = matches.get(0);
+        long expectedAmount = matches.get(0).amountVnd();
+        int durationDays = matches.get(0).durationDays();
         if (amount != expectedAmount) return true;
         transactions.execute(status -> {
             List<Long> userIds = jdbc.query("""
@@ -163,17 +174,66 @@ public class PremiumService {
                     """, (rs, row) -> rs.getLong(1), reference, paymentLinkId, orderCode, expectedAmount);
             if (!userIds.isEmpty()) {
                 jdbc.update("""
-                        INSERT INTO premium_memberships (user_id, expires_at, last_payment_order_code, updated_at)
-                        VALUES (?, NOW() + INTERVAL '30 days', ?, NOW())
+                        INSERT INTO premium_memberships (
+                            user_id, expires_at, last_payment_order_code, updated_at, cancelled_at, cancelled_by
+                        ) VALUES (?, NOW() + (? * INTERVAL '1 day'), ?, NOW(), NULL, NULL)
                         ON CONFLICT (user_id) DO UPDATE SET
-                          expires_at = GREATEST(premium_memberships.expires_at, NOW()) + INTERVAL '30 days',
+                          expires_at = GREATEST(premium_memberships.expires_at, NOW()) + (? * INTERVAL '1 day'),
                           last_payment_order_code = EXCLUDED.last_payment_order_code,
-                          updated_at = NOW()
-                        """, userIds.get(0), orderCode);
+                          updated_at = NOW(), cancelled_at = NULL, cancelled_by = NULL
+                        """,
+                        userIds.get(0), durationDays, orderCode, durationDays);
             }
             return null;
         });
         return true;
+    }
+
+    public void cancelMembership(long userId, long adminId) {
+        List<PendingPremiumPayment> pendingPayments = jdbc.query("""
+                SELECT order_code, amount_vnd
+                FROM premium_payments WHERE user_id = ? AND status = 'PENDING'
+                """, (rs, row) -> new PendingPremiumPayment(rs.getLong("order_code"), rs.getLong("amount_vnd")), userId);
+
+        // Close provider checkout links when possible; access revocation below remains authoritative.
+        if (payOS.isConfigured()) {
+            for (PendingPremiumPayment payment : pendingPayments) {
+                try {
+                    PayOSClient.PaymentLinkStatus remote = payOS.getPaymentLinkStatus(payment.orderCode());
+                    if (isPaid(remote.status()) && remote.amountPaid() == payment.amountVnd()) {
+                        handlePayOSPayment(payment.orderCode(), remote.amountPaid(), null, null);
+                        continue;
+                    }
+                    if ("PENDING".equalsIgnoreCase(remote.status())) {
+                        remote = payOS.cancelPaymentLink(payment.orderCode(), "Premium canceled by admin");
+                        if (isPaid(remote.status()) && remote.amountPaid() == payment.amountVnd()) {
+                            handlePayOSPayment(payment.orderCode(), remote.amountPaid(), null, null);
+                        }
+                    }
+                } catch (RuntimeException exception) {
+                    log.warn("Could not close pending PayOS link for Premium order {} during admin cancellation.", payment.orderCode());
+                }
+            }
+        }
+
+        transactions.execute(status -> {
+            // Keep the same lock order as the verified payment callback to avoid deadlocks.
+            jdbc.update("""
+                    UPDATE premium_payments SET status = 'CANCELLED', updated_at = NOW()
+                    WHERE user_id = ? AND status = 'PENDING'
+                    """, userId);
+            int cancelled = jdbc.update("""
+                    UPDATE premium_memberships
+                    SET expires_at = NOW(), cancelled_at = NOW(), cancelled_by = ?, updated_at = NOW()
+                    WHERE user_id = ? AND expires_at > NOW()
+                    """, adminId, userId);
+            if (cancelled == 0) throw ApiException.notFound("Không tìm thấy gói Premium đang hoạt động của người dùng này.");
+            return null;
+        });
+    }
+
+    private boolean isPaid(String status) {
+        return "PAID".equalsIgnoreCase(status);
     }
 
     public HealthProfile getHealthProfile(long userId) {
@@ -484,9 +544,16 @@ public class PremiumService {
         if (active == null || active == 0) throw ApiException.forbidden("Tính năng gợi ý sức khỏe cần gói Premium còn hiệu lực.");
     }
 
-    private long priceVnd() {
-        return jdbc.query("SELECT setting_value FROM platform_settings WHERE setting_key = 'premium_price_vnd'",
-                rs -> rs.next() ? parsePrice(rs.getString(1)) : 0L);
+    private long priceVnd(String planCode) {
+        String settingKey = "YEARLY".equals(planCode) ? "premium_annual_price_vnd" : "premium_price_vnd";
+        return jdbc.query("SELECT setting_value FROM platform_settings WHERE setting_key = ?",
+                rs -> rs.next() ? parsePrice(rs.getString(1)) : 0L, settingKey);
+    }
+
+    private String normalizePlan(String planCode) {
+        if (planCode == null || planCode.isBlank() || "MONTHLY".equalsIgnoreCase(planCode)) return "MONTHLY";
+        if ("YEARLY".equalsIgnoreCase(planCode)) return "YEARLY";
+        throw ApiException.badRequest("Gói Premium không hợp lệ.");
     }
 
     private long nextOrderCode() {
@@ -598,9 +665,11 @@ public class PremiumService {
         return "Thông tin chỉ mang tính tham khảo dinh dưỡng, không thay thế chẩn đoán hay điều trị. Hãy hỏi bác sĩ/dược sĩ khi có bệnh nền, đang dùng thuốc hoặc có dị ứng; xác nhận thành phần và nguy cơ lẫn chéo với cửa hàng.";
     }
 
-    public record Overview(long priceVnd, boolean payosConfigured, boolean geminiConfigured, boolean premiumActive,
+    public record Overview(long priceVnd, long annualPriceVnd, boolean payosConfigured, boolean geminiConfigured, boolean premiumActive,
                            Instant expiresAt, HealthProfile healthProfile) {}
-    public record PaymentInfo(long orderCode, long amountVnd, String status, String checkoutUrl, String qrCode, Instant expiresAt, Instant paidAt) {}
+    public record PaymentRequest(String planCode) {}
+    public record PaymentInfo(long orderCode, long amountVnd, String status, String checkoutUrl, String qrCode,
+                              Instant expiresAt, Instant paidAt, String planCode, int durationDays) {}
     public record ProfilePayload(String ageGroup, BigDecimal heightCm, BigDecimal weightKg, String allergies,
                                  String chronicConditions, String medications, String healthGoals,
                                  List<String> notProvidedFields, Boolean consentToSave) {}
@@ -619,4 +688,6 @@ public class PremiumService {
                              long pricePerKg, BigDecimal stockKg, BigDecimal caloriesPer100g, BigDecimal vitaminCMg,
                              BigDecimal fiberG, BigDecimal sugarG, BigDecimal potassiumMg, BigDecimal waterPercent,
                              String healthBenefits, String servingNote) {}
+    private record PaymentTerms(long amountVnd, int durationDays) {}
+    private record PendingPremiumPayment(long orderCode, long amountVnd) {}
 }

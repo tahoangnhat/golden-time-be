@@ -1,9 +1,14 @@
 package com.goldentime.api.admin;
 
+import com.goldentime.api.security.CurrentUser;
+import com.goldentime.api.premium.PremiumService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
 
 import java.time.Instant;
 import java.util.List;
@@ -13,9 +18,11 @@ import java.util.List;
 @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
 public class AdminPremiumController {
     private final JdbcTemplate jdbc;
+    private final PremiumService premium;
 
-    public AdminPremiumController(JdbcTemplate jdbc) {
+    public AdminPremiumController(JdbcTemplate jdbc, PremiumService premium) {
         this.jdbc = jdbc;
+        this.premium = premium;
     }
 
     @GetMapping
@@ -33,33 +40,42 @@ public class AdminPremiumController {
                 """, (rs, row) -> new PaymentTotals(rs.getLong("paid_count"), rs.getLong("pending_count"), rs.getLong("paid_revenue")));
         List<PremiumMember> members = jdbc.query("""
                 SELECT u.id AS user_id, u.full_name, u.email, m.expires_at,
-                       m.last_payment_order_code, m.updated_at
+                       m.last_payment_order_code, m.updated_at, m.cancelled_at, m.cancelled_by
                 FROM premium_memberships m JOIN users u ON u.id = m.user_id
                 ORDER BY (m.expires_at > NOW()) DESC, m.expires_at DESC, u.id DESC
                 LIMIT 500
                 """, (rs, row) -> new PremiumMember(rs.getLong("user_id"), rs.getString("full_name"),
                 rs.getString("email"), rs.getTimestamp("expires_at").toInstant(),
-                (Long) rs.getObject("last_payment_order_code"), rs.getTimestamp("updated_at").toInstant()));
+                (Long) rs.getObject("last_payment_order_code"), rs.getTimestamp("updated_at").toInstant(),
+                rs.getTimestamp("cancelled_at") == null ? null : rs.getTimestamp("cancelled_at").toInstant(),
+                (Long) rs.getObject("cancelled_by")));
         List<PremiumPayment> paymentHistory = jdbc.query("""
-                SELECT p.order_code, p.user_id, u.full_name, u.email, p.amount_vnd, p.status,
+                SELECT p.order_code, p.user_id, u.full_name, u.email, p.amount_vnd, p.status, p.plan_code, p.duration_days,
                        p.reference, p.created_at, p.paid_at, p.expires_at
                 FROM premium_payments p JOIN users u ON u.id = p.user_id
                 ORDER BY p.created_at DESC, p.order_code DESC
                 LIMIT 500
                 """, (rs, row) -> new PremiumPayment(rs.getLong("order_code"), rs.getLong("user_id"),
                 rs.getString("full_name"), rs.getString("email"), rs.getLong("amount_vnd"), rs.getString("status"),
+                rs.getString("plan_code"), rs.getInt("duration_days"),
                 rs.getString("reference"), rs.getTimestamp("created_at").toInstant(),
                 rs.getTimestamp("paid_at") == null ? null : rs.getTimestamp("paid_at").toInstant(),
                 rs.getTimestamp("expires_at").toInstant()));
         return new PremiumAdminOverview(summary, payments, members, paymentHistory);
     }
 
+    @PostMapping("/{userId}/cancel")
+    public void cancelMembership(Authentication authentication, @PathVariable long userId) {
+        premium.cancelMembership(userId, CurrentUser.id(authentication));
+    }
+
     public record PremiumAdminSummary(long activeMembers, long totalMembers) {}
     public record PaymentTotals(long paidCount, long pendingCount, long paidRevenue) {}
     public record PremiumMember(long userId, String fullName, String email, Instant expiresAt,
-                                Long lastPaymentOrderCode, Instant updatedAt) {}
+                                Long lastPaymentOrderCode, Instant updatedAt, Instant cancelledAt, Long cancelledBy) {}
     public record PremiumPayment(long orderCode, long userId, String fullName, String email, long amountVnd,
-                                 String status, String reference, Instant createdAt, Instant paidAt, Instant expiresAt) {}
+                                 String status, String planCode, int durationDays, String reference, Instant createdAt,
+                                 Instant paidAt, Instant expiresAt) {}
     public record PremiumAdminOverview(PremiumAdminSummary membership, PaymentTotals payments,
                                        List<PremiumMember> members, List<PremiumPayment> paymentHistory) {}
 }
