@@ -32,6 +32,12 @@ public class PremiumController {
         return premium.createPayment(CurrentUser.id(authentication), request == null ? null : request.planCode());
     }
 
+    @PostMapping("/google-play/verify")
+    public PremiumService.Overview verifyGooglePlayPurchase(Authentication authentication,
+            @RequestBody PremiumService.GooglePlayPurchaseRequest request) {
+        return premium.verifyGooglePlayPurchase(CurrentUser.id(authentication), request);
+    }
+
     @GetMapping("/payments/{orderCode}")
     public PremiumService.PaymentInfo paymentStatus(Authentication authentication, @PathVariable long orderCode) {
         return premium.paymentStatus(CurrentUser.id(authentication), orderCode);

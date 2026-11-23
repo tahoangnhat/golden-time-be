@@ -48,6 +48,11 @@ app:
     read-timeout-ms: 60000
   premium:
     health-encryption-key: ${PREMIUM_HEALTH_ENCRYPTION_KEY:}
+    google-play:
+      package-name: ${GOOGLE_PLAY_PACKAGE_NAME:vn.goldentime.customer}
+      monthly-product-id: ${GOOGLE_PLAY_PREMIUM_MONTHLY_PRODUCT_ID:golden_time_premium_30d}
+      annual-product-id: ${GOOGLE_PLAY_PREMIUM_ANNUAL_PRODUCT_ID:golden_time_premium_365d}
+      service-account-json: ${GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:}
     gemini:
       api-key: ${GEMINI_API_KEY:}
       model: ${GEMINI_MODEL:gemini-3.1-flash-lite}

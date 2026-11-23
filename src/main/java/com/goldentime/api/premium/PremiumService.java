@@ -45,6 +45,7 @@ public class PremiumService {
 
     private final JdbcTemplate jdbc;
     private final PayOSClient payOS;
+    private final GooglePlayBillingClient googlePlay;
     private final RestClient gemini;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
@@ -55,7 +56,7 @@ public class PremiumService {
     private final String frontendUrl;
     private final int paymentExpiryMinutes;
 
-    public PremiumService(JdbcTemplate jdbc, PayOSClient payOS, RestClient.Builder builder, ObjectMapper mapper,
+    public PremiumService(JdbcTemplate jdbc, PayOSClient payOS, GooglePlayBillingClient googlePlay, RestClient.Builder builder, ObjectMapper mapper,
                           org.springframework.transaction.PlatformTransactionManager transactionManager,
                           @Value("${app.premium.gemini.api-key:}") String geminiKey,
                           @Value("${app.premium.gemini.model:gemini-3.1-flash-lite}") String geminiModel,
@@ -64,6 +65,7 @@ public class PremiumService {
                           @Value("${app.payment.payos.link-expiry-minutes:15}") int paymentExpiryMinutes) {
         this.jdbc = jdbc;
         this.payOS = payOS;
+        this.googlePlay = googlePlay;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(transactionManager);
         this.geminiModel = geminiModel;
@@ -85,8 +87,89 @@ public class PremiumService {
         List<Instant> expiries = jdbc.query("SELECT expires_at FROM premium_memberships WHERE user_id = ?", (rs, row) -> rs.getTimestamp(1).toInstant(), userId);
         Instant expiresAt = expiries.isEmpty() ? null : expiries.get(0);
         HealthProfile profile = getHealthProfile(userId);
-        return new Overview(priceVnd("MONTHLY"), priceVnd("YEARLY"), payOS.isConfigured(), geminiConfigured,
+        return new Overview(priceVnd("MONTHLY"), priceVnd("YEARLY"), payOS.isConfigured(), googlePlay.isConfigured(), geminiConfigured,
                 expiresAt != null && expiresAt.isAfter(Instant.now()), expiresAt, profile);
+    }
+
+    public Overview verifyGooglePlayPurchase(long userId, GooglePlayPurchaseRequest request) {
+        if (request == null || request.productId() == null || request.purchaseToken() == null
+                || request.purchaseToken().isBlank() || request.purchaseToken().length() > 4096) {
+            throw ApiException.badRequest("Thông tin giao dịch Google Play không hợp lệ.");
+        }
+        if (!googlePlay.isConfigured()) throw ApiException.unavailable("Google Play Billing chưa được cấu hình ở máy chủ.");
+        String planCode = googlePlay.planForProduct(request.productId());
+        if (planCode == null) throw ApiException.badRequest("Sản phẩm Premium Google Play không hợp lệ.");
+
+        GooglePlayBillingClient.ProductPurchase purchase;
+        try {
+            purchase = googlePlay.getProductPurchase(request.productId(), request.purchaseToken());
+        } catch (RuntimeException exception) {
+            log.warn("Google Play purchase verification failed for user {}.", userId);
+            throw ApiException.unavailable("Chưa xác minh được thanh toán với Google Play. Vui lòng thử lại.");
+        }
+        if (purchase.purchaseState() == 2) throw ApiException.badRequest("Giao dịch Google Play đang chờ xử lý.");
+        if (purchase.purchaseState() != 0 || purchase.quantity() != 1
+                || (!purchase.productId().isBlank() && !request.productId().equals(purchase.productId()))) {
+            throw ApiException.badRequest("Giao dịch Google Play chưa hợp lệ hoặc đã bị hủy.");
+        }
+        String expectedAccountId = obfuscatedAccountId(userId);
+        if (!expectedAccountId.equals(purchase.obfuscatedExternalAccountId())) {
+            throw ApiException.badRequest("Giao dịch này không thuộc tài khoản Golden Time đang đăng nhập.");
+        }
+
+        List<Long> priorOwners = jdbc.query("SELECT user_id FROM google_play_premium_purchases WHERE purchase_token = ?",
+                (rs, row) -> rs.getLong(1), request.purchaseToken());
+        if (!priorOwners.isEmpty() && priorOwners.get(0) != userId) {
+            throw ApiException.badRequest("Giao dịch Google Play này đã được liên kết với tài khoản khác.");
+        }
+        if (purchase.consumptionState() == 1 && priorOwners.isEmpty()) {
+            throw ApiException.badRequest("Giao dịch Google Play này đã được sử dụng.");
+        }
+        if (purchase.consumptionState() != 0 && purchase.consumptionState() != 1) {
+            throw ApiException.badRequest("Trạng thái sản phẩm Google Play không hợp lệ.");
+        }
+
+        int durationDays = "YEARLY".equals(planCode) ? 365 : 30;
+        transactions.execute(status -> {
+            List<Long> inserted = jdbc.query("""
+                    INSERT INTO google_play_premium_purchases (purchase_token, user_id, product_id, plan_code, duration_days)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT (purchase_token) DO NOTHING
+                    RETURNING user_id
+                    """, (rs, row) -> rs.getLong(1), request.purchaseToken(), userId, request.productId(), planCode, durationDays);
+            if (!inserted.isEmpty()) {
+                jdbc.update("""
+                        INSERT INTO premium_memberships (user_id, expires_at, last_payment_order_code, updated_at, cancelled_at, cancelled_by)
+                        VALUES (?, NOW() + (? * INTERVAL '1 day'), NULL, NOW(), NULL, NULL)
+                        ON CONFLICT (user_id) DO UPDATE SET
+                          expires_at = GREATEST(premium_memberships.expires_at, NOW()) + (? * INTERVAL '1 day'),
+                          last_payment_order_code = NULL, updated_at = NOW(), cancelled_at = NULL, cancelled_by = NULL
+                        """, userId, durationDays, durationDays);
+            }
+            return null;
+        });
+
+        if (purchase.consumptionState() == 0) {
+            try {
+                googlePlay.consumeProduct(request.productId(), request.purchaseToken());
+                jdbc.update("UPDATE google_play_premium_purchases SET consumed_at = COALESCE(consumed_at, NOW()) WHERE purchase_token = ?",
+                        request.purchaseToken());
+            } catch (RuntimeException exception) {
+                // The entitlement is already stored. Retrying verification from the app will retry consumption.
+                log.warn("Google Play purchase was verified, but consumption is pending for user {}.", userId);
+            }
+        }
+        return overview(userId);
+    }
+
+    private String obfuscatedAccountId(long userId) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(("goldentime-user:" + userId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is not available.", exception);
+        }
     }
 
     public PaymentInfo createPayment(long userId, String requestedPlan) {
@@ -666,9 +749,10 @@ public class PremiumService {
         return "Thông tin chỉ mang tính tham khảo dinh dưỡng, không thay thế chẩn đoán hay điều trị. Hãy hỏi bác sĩ/dược sĩ khi có bệnh nền, đang dùng thuốc hoặc có dị ứng; xác nhận thành phần và nguy cơ lẫn chéo với cửa hàng.";
     }
 
-    public record Overview(long priceVnd, long annualPriceVnd, boolean payosConfigured, boolean geminiConfigured, boolean premiumActive,
+    public record Overview(long priceVnd, long annualPriceVnd, boolean payosConfigured, boolean googlePlayConfigured, boolean geminiConfigured, boolean premiumActive,
                            Instant expiresAt, HealthProfile healthProfile) {}
     public record PaymentRequest(String planCode) {}
+    public record GooglePlayPurchaseRequest(String productId, String purchaseToken) {}
     public record PaymentInfo(long orderCode, long amountVnd, String status, String checkoutUrl, String qrCode,
                               Instant expiresAt, Instant paidAt, String planCode, int durationDays) {}
     public record ProfilePayload(String ageGroup, BigDecimal heightCm, BigDecimal weightKg, String allergies,
