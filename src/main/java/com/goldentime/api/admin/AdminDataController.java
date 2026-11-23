@@ -114,13 +114,14 @@ public class AdminDataController {
     @GetMapping("/scans")
     public List<ScanRow> scans() {
         return jdbc.query("""
-                SELECT a.id, a.detected_name, f.emoji, a.freshness_score, a.quality_score, a.confidence,
+                SELECT a.id, a.detected_name, f.emoji, a.image_path, a.freshness_score, a.quality_score, a.confidence,
                        u.full_name AS user_name, a.analysis_mode, a.created_at
                 FROM ai_scans a LEFT JOIN fruits f ON f.id = a.fruit_id
                 JOIN users u ON u.id = a.user_id
                 ORDER BY a.created_at DESC, a.id DESC LIMIT 500
                 """, (rs, row) -> new ScanRow(rs.getLong("id"), rs.getString("detected_name"), rs.getString("emoji"),
                 nullableInt(rs, "freshness_score"), nullableInt(rs, "quality_score"), nullableDouble(rs, "confidence"),
+                rs.getString("image_path") == null ? null : "/uploads/" + rs.getString("image_path"),
                 rs.getString("user_name"), rs.getString("analysis_mode"), rs.getTimestamp("created_at").toInstant()));
     }
 
@@ -224,7 +225,7 @@ public class AdminDataController {
                            String deliveryAddress, Instant createdAt, int itemCount) {}
     public record AdminProductReviewRow(long id, long productId, String productName, String shopName,
                                         String author, int rating, Instant createdAt) {}
-    public record ScanRow(long id, String fruit, String emoji, Integer freshness, Integer quality, Double confidence,
+    public record ScanRow(long id, String fruit, String emoji, Integer freshness, Integer quality, Double confidence, String imageUrl,
                           String user, String mode, Instant createdAt) {}
     public record NutritionRow(long id, String slug, String name, String emoji, String category, BigDecimal calories, BigDecimal vitaminC,
                                BigDecimal fiber, BigDecimal sugar, BigDecimal potassium, BigDecimal water, String benefits) {}
