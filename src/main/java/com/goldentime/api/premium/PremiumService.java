@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.goldentime.api.commerce.payment.PayOSClient;
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.common.FrontendUrl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -68,7 +69,7 @@ public class PremiumService {
         this.geminiModel = geminiModel;
         this.geminiConfigured = geminiKey != null && !geminiKey.isBlank();
         this.healthEncryptionKey = healthEncryptionKey;
-        this.frontendUrl = frontendUrl.replaceAll("/+$", "");
+        this.frontendUrl = FrontendUrl.canonicalBase(frontendUrl);
         this.paymentExpiryMinutes = Math.max(5, paymentExpiryMinutes);
         JdkClientHttpRequestFactory aiRequestFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5)).build());

@@ -1,6 +1,7 @@
 package com.goldentime.api.commerce;
 
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.common.FrontendUrl;
 import com.goldentime.api.commerce.payment.PayOSPaymentService;
 import com.goldentime.api.commerce.payment.WalletService;
 import com.goldentime.api.commerce.shipping.GhnShippingService;
@@ -57,7 +58,7 @@ public class OrderController {
         this.shipping = shipping;
         this.voucherService = voucherService;
         this.notifications = notifications;
-        this.frontendUrl = frontendUrl;
+        this.frontendUrl = FrontendUrl.canonicalBase(frontendUrl);
         this.paymentLinkExpiryMinutes = paymentLinkExpiryMinutes;
     }
 

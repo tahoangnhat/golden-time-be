@@ -1,6 +1,7 @@
 package com.goldentime.api.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.goldentime.api.common.FrontendUrl;
 import com.goldentime.api.security.JwtAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
@@ -21,7 +22,6 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -80,7 +80,7 @@ public class SecurityConfig {
     @Bean
     CorsConfigurationSource corsConfigurationSource(@Value("${app.cors.allowed-origins}") String origins) {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.stream(origins.split(",")).map(String::trim).filter(value -> !value.isEmpty()).toList());
+        configuration.setAllowedOrigins(FrontendUrl.allowedOrigins(origins));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setExposedHeaders(List.of("Location"));
