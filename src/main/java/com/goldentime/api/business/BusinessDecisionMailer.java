@@ -52,11 +52,6 @@ public class BusinessDecisionMailer {
     }
 
     public boolean sendDecision(String email, String contactName, String businessName, boolean approved, String reason) {
-        if (from.isBlank()) {
-            log.warn("Skipping business decision email because MAIL_FROM is not configured.");
-            return false;
-        }
-
         String subject = approved
                 ? "Golden Time đã duyệt đăng ký doanh nghiệp của bạn"
                 : "Kết quả đăng ký doanh nghiệp Golden Time";
@@ -70,6 +65,35 @@ public class BusinessDecisionMailer {
                     + "Lý do: " + (reason == null || reason.isBlank() ? "Vui lòng liên hệ Golden Time để biết thêm thông tin." : reason.trim())
                     + "\n\nBạn có thể cập nhật hồ sơ và gửi đăng ký lại.";
 
+        return sendPlainText(email, subject, message, "business decision");
+    }
+
+    public boolean sendRegistrationSuccess(String email, String fullName) {
+        String name = fullName == null || fullName.isBlank() ? "bạn" : fullName.trim();
+        String message = "Xin chào " + name + ",\n\n"
+                + "Tài khoản Golden Time của bạn đã được tạo thành công. "
+                + "Bạn có thể đăng nhập để khám phá các tính năng của ứng dụng.\n\n"
+                + "Nếu bạn không thực hiện đăng ký này, vui lòng liên hệ với đội ngũ Golden Time.";
+        return sendPlainText(email, "Tài khoản Golden Time đã được tạo thành công", message, "registration");
+    }
+
+    public boolean sendPremiumPurchaseSuccess(String email, String fullName, String planCode, int durationDays) {
+        String name = fullName == null || fullName.isBlank() ? "bạn" : fullName.trim();
+        String plan = "YEARLY".equalsIgnoreCase(planCode) ? "Premium năm" : "Premium tháng";
+        String duration = durationDays > 0 ? durationDays + " ngày" : plan;
+        String message = "Xin chào " + name + ",\n\n"
+                + "Thanh toán gói " + plan + " của bạn đã thành công và quyền lợi Premium đã được kích hoạt.\n"
+                + "Thời hạn được cộng thêm: " + duration + ".\n\n"
+                + "Cảm ơn bạn đã sử dụng Golden Time!";
+        return sendPlainText(email, "Thanh toán Golden Time Premium thành công", message, "Premium purchase");
+    }
+
+    private boolean sendPlainText(String email, String subject, String message, String eventName) {
+        if (from.isBlank()) {
+            log.warn("Skipping {} email because MAIL_FROM is not configured.", eventName);
+            return false;
+        }
+
         try {
             MimeMessage mime = createMessage(email, subject, message);
             if (gmailApiConfigured()) {
@@ -82,19 +106,19 @@ public class BusinessDecisionMailer {
             }
             return true;
         } catch (GoogleRequestException exception) {
-            log.warn("Business decision was saved, but {} returned HTTP {} ({}).",
+            log.warn("{} was saved, but {} returned HTTP {} ({}).", eventName,
                     exception.operation, exception.response.getStatusCode().value(),
                     summarizeGoogleError(exception.response));
             return false;
         } catch (RestClientResponseException exception) {
-            log.warn("Business decision was saved, but a Google request returned HTTP {} ({}).",
+            log.warn("{} was saved, but a Google request returned HTTP {} ({}).", eventName,
                     exception.getStatusCode().value(), summarizeGoogleError(exception));
             return false;
         } catch (MessagingException | RuntimeException exception) {
-            log.warn("Business decision was saved, but the notification email could not be sent.", exception);
+            log.warn("{} was saved, but the notification email could not be sent.", eventName, exception);
             return false;
         } catch (Exception exception) {
-            log.warn("Business decision was saved, but the notification email could not be sent.", exception);
+            log.warn("{} was saved, but the notification email could not be sent.", eventName, exception);
             return false;
         }
     }

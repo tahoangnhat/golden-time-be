@@ -1,6 +1,7 @@
 package com.goldentime.api.auth;
 
 import com.goldentime.api.common.ApiException;
+import com.goldentime.api.business.BusinessDecisionMailer;
 import com.goldentime.api.security.CurrentUser;
 import com.goldentime.api.security.JwtService;
 import com.goldentime.api.security.RefreshTokenService;
@@ -18,6 +19,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.util.Locale;
@@ -30,15 +33,17 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokens;
+    private final BusinessDecisionMailer mailer;
     private final boolean secureRefreshCookie;
 
     public AuthController(JdbcTemplate jdbc, PasswordEncoder passwordEncoder, JwtService jwtService,
-                          RefreshTokenService refreshTokens,
+                          RefreshTokenService refreshTokens, BusinessDecisionMailer mailer,
                           @Value("${app.jwt.refresh-token-secure:false}") boolean secureRefreshCookie) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokens = refreshTokens;
+        this.mailer = mailer;
         this.secureRefreshCookie = secureRefreshCookie;
     }
 
@@ -77,7 +82,14 @@ public class AuthController {
                 RETURNING id
                 """, Long.class, email, phone, passwordEncoder.encode(request.password()), request.fullName().trim());
         UserRow user = findUser(id);
-        return createSession(user, response);
+        AuthResponse authResponse = createSession(user, response);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                mailer.sendRegistrationSuccess(user.email(), user.fullName());
+            }
+        });
+        return authResponse;
     }
 
     @PostMapping("/refresh")

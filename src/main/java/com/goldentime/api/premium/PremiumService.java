@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.goldentime.api.commerce.payment.PayOSClient;
 import com.goldentime.api.common.ApiException;
 import com.goldentime.api.common.FrontendUrl;
+import com.goldentime.api.business.BusinessDecisionMailer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -46,6 +47,7 @@ public class PremiumService {
     private final JdbcTemplate jdbc;
     private final PayOSClient payOS;
     private final GooglePlayBillingClient googlePlay;
+    private final BusinessDecisionMailer mailer;
     private final RestClient gemini;
     private final ObjectMapper mapper;
     private final TransactionTemplate transactions;
@@ -56,7 +58,8 @@ public class PremiumService {
     private final String frontendUrl;
     private final int paymentExpiryMinutes;
 
-    public PremiumService(JdbcTemplate jdbc, PayOSClient payOS, GooglePlayBillingClient googlePlay, RestClient.Builder builder, ObjectMapper mapper,
+    public PremiumService(JdbcTemplate jdbc, PayOSClient payOS, GooglePlayBillingClient googlePlay,
+                          BusinessDecisionMailer mailer, RestClient.Builder builder, ObjectMapper mapper,
                           org.springframework.transaction.PlatformTransactionManager transactionManager,
                           @Value("${app.premium.gemini.api-key:}") String geminiKey,
                           @Value("${app.premium.gemini.model:gemini-3.1-flash-lite}") String geminiModel,
@@ -66,6 +69,7 @@ public class PremiumService {
         this.jdbc = jdbc;
         this.payOS = payOS;
         this.googlePlay = googlePlay;
+        this.mailer = mailer;
         this.mapper = mapper;
         this.transactions = new TransactionTemplate(transactionManager);
         this.geminiModel = geminiModel;
@@ -130,7 +134,7 @@ public class PremiumService {
         }
 
         int durationDays = "YEARLY".equals(planCode) ? 365 : 30;
-        transactions.execute(status -> {
+        Boolean newlyGranted = transactions.execute(status -> {
             List<Long> inserted = jdbc.query("""
                     INSERT INTO google_play_premium_purchases (purchase_token, user_id, product_id, plan_code, duration_days)
                     VALUES (?, ?, ?, ?, ?)
@@ -146,7 +150,7 @@ public class PremiumService {
                           last_payment_order_code = NULL, updated_at = NOW(), cancelled_at = NULL, cancelled_by = NULL
                         """, userId, durationDays, durationDays);
             }
-            return null;
+            return !inserted.isEmpty();
         });
 
         if (purchase.consumptionState() == 0) {
@@ -158,6 +162,9 @@ public class PremiumService {
                 // The entitlement is already stored. Retrying verification from the app will retry consumption.
                 log.warn("Google Play purchase was verified, but consumption is pending for user {}.", userId);
             }
+        }
+        if (Boolean.TRUE.equals(newlyGranted)) {
+            sendPremiumPurchaseEmail(userId, planCode, durationDays);
         }
         return overview(userId);
     }
@@ -242,13 +249,13 @@ public class PremiumService {
 
     /** Called only after the shared PayOS webhook signature and success codes have been verified. */
     public boolean handlePayOSPayment(long orderCode, long amount, String reference, String paymentLinkId) {
-        List<PaymentTerms> matches = jdbc.query("SELECT amount_vnd, duration_days FROM premium_payments WHERE order_code = ?",
-                (rs, row) -> new PaymentTerms(rs.getLong("amount_vnd"), rs.getInt("duration_days")), orderCode);
+        List<PaymentTerms> matches = jdbc.query("SELECT amount_vnd, duration_days, plan_code FROM premium_payments WHERE order_code = ?",
+                (rs, row) -> new PaymentTerms(rs.getLong("amount_vnd"), rs.getInt("duration_days"), rs.getString("plan_code")), orderCode);
         if (matches.isEmpty()) return false;
         long expectedAmount = matches.get(0).amountVnd();
         int durationDays = matches.get(0).durationDays();
         if (amount != expectedAmount) return true;
-        transactions.execute(status -> {
+        Long paidUserId = transactions.execute(status -> {
             List<Long> userIds = jdbc.query("""
                     UPDATE premium_payments
                     SET status = 'PAID', paid_at = COALESCE(paid_at, NOW()), reference = COALESCE(?, reference),
@@ -268,9 +275,26 @@ public class PremiumService {
                         """,
                         userIds.get(0), durationDays, orderCode, durationDays);
             }
-            return null;
+            return userIds.isEmpty() ? null : userIds.get(0);
         });
+        if (paidUserId != null) {
+            sendPremiumPurchaseEmail(paidUserId, matches.get(0).planCode(), durationDays);
+        }
         return true;
+    }
+
+    private void sendPremiumPurchaseEmail(long userId, String planCode, int durationDays) {
+        try {
+            List<PremiumRecipient> recipients = jdbc.query("""
+                    SELECT email, full_name FROM users WHERE id = ? AND enabled = TRUE
+                    """, (rs, row) -> new PremiumRecipient(rs.getString("email"), rs.getString("full_name")), userId);
+            if (!recipients.isEmpty()) {
+                PremiumRecipient recipient = recipients.get(0);
+                mailer.sendPremiumPurchaseSuccess(recipient.email(), recipient.fullName(), planCode, durationDays);
+            }
+        } catch (RuntimeException exception) {
+            log.warn("Premium was activated for user {}, but the confirmation email could not be prepared.", userId, exception);
+        }
     }
 
     public void cancelMembership(long userId, long adminId) {
@@ -773,6 +797,7 @@ public class PremiumService {
                              long pricePerKg, BigDecimal stockKg, BigDecimal caloriesPer100g, BigDecimal vitaminCMg,
                              BigDecimal fiberG, BigDecimal sugarG, BigDecimal potassiumMg, BigDecimal waterPercent,
                              String healthBenefits, String servingNote) {}
-    private record PaymentTerms(long amountVnd, int durationDays) {}
+    private record PaymentTerms(long amountVnd, int durationDays, String planCode) {}
     private record PendingPremiumPayment(long orderCode, long amountVnd) {}
+    private record PremiumRecipient(String email, String fullName) {}
 }
