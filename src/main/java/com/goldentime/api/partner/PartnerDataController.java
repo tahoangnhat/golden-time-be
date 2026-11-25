@@ -434,8 +434,12 @@ public class PartnerDataController {
                        (SELECT COUNT(*) FROM orders WHERE shop_id = ?) AS orders,
                        (SELECT COUNT(*) FROM orders WHERE shop_id = ? AND status = 'PENDING') AS pending_orders,
                        (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE shop_id = ? AND status <> 'CANCELLED' AND created_at::date = CURRENT_DATE) AS order_value_today,
-                       (SELECT COALESCE(AVG(shop_rating), 0) FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL) AS rating,
-                       (SELECT COUNT(*) FROM orders WHERE shop_id = ? AND shop_rating IS NOT NULL) AS rating_count
+                       (SELECT COALESCE(AVG(pr.rating), 0)
+                        FROM product_reviews pr JOIN shop_products p ON p.id = pr.shop_product_id
+                        WHERE p.shop_id = ?) AS rating,
+                       (SELECT COUNT(*)
+                        FROM product_reviews pr JOIN shop_products p ON p.id = pr.shop_product_id
+                        WHERE p.shop_id = ?) AS rating_count
                 """, (rs, row) -> new ShopCounts(rs.getInt("products"), rs.getInt("sold_out"), rs.getInt("orders"),
                 rs.getInt("pending_orders"), rs.getLong("order_value_today"), rs.getBigDecimal("rating"), rs.getInt("rating_count")),
                 shopId, shopId, shopId, shopId, shopId, shopId, shopId);

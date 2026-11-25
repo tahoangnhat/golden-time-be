@@ -27,8 +27,7 @@ public class AdminDataController {
                 SELECT u.id, u.full_name, u.email, u.role, u.phone, u.enabled, u.created_at,
                        (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count,
                        (SELECT COUNT(*) FROM ai_scans a WHERE a.user_id = u.id) AS scan_count,
-                       (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.shop_rating IS NOT NULL)
-                         + (SELECT COUNT(*) FROM product_reviews pr WHERE pr.user_id = u.id) AS review_count
+                       (SELECT COUNT(*) FROM product_reviews pr WHERE pr.user_id = u.id) AS review_count
                 FROM users u ORDER BY u.created_at DESC, u.id DESC
                 """, (rs, row) -> new UserRow(rs.getLong("id"), rs.getString("full_name"), rs.getString("email"),
                 rs.getString("role"), rs.getString("phone"), rs.getBoolean("enabled"), rs.getTimestamp("created_at").toInstant(),
