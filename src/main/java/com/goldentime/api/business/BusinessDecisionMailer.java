@@ -88,6 +88,16 @@ public class BusinessDecisionMailer {
         return sendPlainText(email, "Thanh toán Golden Time Premium thành công", message, "Premium purchase");
     }
 
+    public boolean sendAccountDeletionVerification(String email, String fullName, String verificationUrl) {
+        String name = fullName == null || fullName.isBlank() ? "bạn" : fullName.trim();
+        String message = "Xin chào " + name + ",\n\n"
+                + "Chúng tôi nhận được yêu cầu xóa tài khoản Golden Time của bạn. "
+                + "Để xác nhận và xóa tài khoản cùng dữ liệu cá nhân, hãy mở liên kết dưới đây trong vòng 30 phút:\n\n"
+                + verificationUrl + "\n\n"
+                + "Nếu bạn không gửi yêu cầu này, hãy bỏ qua email. Tài khoản sẽ không bị thay đổi nếu bạn không mở liên kết xác nhận.";
+        return sendPlainText(email, "Xác nhận yêu cầu xóa tài khoản Golden Time", message, "account deletion");
+    }
+
     private boolean sendPlainText(String email, String subject, String message, String eventName) {
         if (from.isBlank()) {
             log.warn("Skipping {} email because MAIL_FROM is not configured.", eventName);

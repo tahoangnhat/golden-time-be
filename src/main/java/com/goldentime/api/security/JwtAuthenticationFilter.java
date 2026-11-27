@@ -2,6 +2,7 @@ package com.goldentime.api.security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -21,9 +22,11 @@ import java.util.List;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
     private final JwtService jwtService;
+    private final JdbcTemplate jdbc;
 
-    public JwtAuthenticationFilter(JwtService jwtService) {
+    public JwtAuthenticationFilter(JwtService jwtService, JdbcTemplate jdbc) {
         this.jwtService = jwtService;
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -41,6 +44,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String tokenType = claims.get("token_type", String.class);
                 if (tokenType != null && !"access".equals(tokenType)) {
                     log.warn("Rejected bearer token on {}: unexpected token type", request.getRequestURI());
+                    SecurityContextHolder.clearContext();
+                    chain.doFilter(request, response);
+                    return;
+                }
+                long userId = Long.parseLong(claims.getSubject());
+                Boolean active = jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND enabled = TRUE)", Boolean.class, userId);
+                if (!Boolean.TRUE.equals(active)) {
                     SecurityContextHolder.clearContext();
                     chain.doFilter(request, response);
                     return;

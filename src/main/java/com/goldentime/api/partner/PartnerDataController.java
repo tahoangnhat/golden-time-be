@@ -364,11 +364,11 @@ public class PartnerDataController {
     public List<ShopOrder> orders(Authentication authentication) {
         long shopId = shopId(CurrentUser.id(authentication));
         List<ShopOrder> orders = jdbc.query("""
-                SELECT o.id, o.user_id, u.full_name AS customer, o.total_amount, o.subtotal_amount,
+                SELECT o.id, o.user_id, COALESCE(u.full_name, 'Tài khoản đã xóa') AS customer, o.total_amount, o.subtotal_amount,
                        o.shipping_fee, o.status, o.payment_method, o.payment_status, o.delivery_name, o.delivery_phone,
                        o.delivery_address, o.note, o.created_at,
                        sh.carrier_order_code, sh.carrier_status, sh.carrier_fee, sh.expected_delivery_at
-                FROM orders o JOIN users u ON u.id = o.user_id
+                FROM orders o LEFT JOIN users u ON u.id = o.user_id
                 LEFT JOIN order_shipments sh ON sh.order_id = o.id
                 WHERE o.shop_id = ? ORDER BY o.created_at DESC, o.id DESC
                 """, (rs, row) -> new ShopOrder(rs.getLong("id"), rs.getString("customer"),

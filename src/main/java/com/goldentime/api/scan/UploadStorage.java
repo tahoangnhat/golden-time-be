@@ -35,6 +35,16 @@ public class UploadStorage {
         return root.toUri().toString();
     }
 
+    public void delete(String filename) {
+        if (filename == null || filename.isBlank()) return;
+        try {
+            Path target = root.resolve(filename).normalize();
+            if (target.getParent() != null && target.getParent().equals(root)) Files.deleteIfExists(target);
+        } catch (IOException ignored) {
+            // Database history is still removed; a storage cleanup failure must not restore an account.
+        }
+    }
+
     private static String extension(String contentType) {
         return switch (contentType == null ? "" : contentType.toLowerCase()) {
             case "image/png" -> ".png";

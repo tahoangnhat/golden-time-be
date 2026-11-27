@@ -55,6 +55,7 @@ public class SecurityConfig {
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/payments/payos/webhook").permitAll()
                         .requestMatchers("/api/shipping/ghn/webhook").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/account-deletion-requests", "/api/account-deletion-requests/confirm").permitAll()
                         .requestMatchers("/api/health", "/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/logout", "/api/business/applications", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/uploads/**").permitAll()
                         .requestMatchers("/api/products/*/review-eligibility").hasRole("USER")
                         .requestMatchers(HttpMethod.POST, "/api/products/*/reviews").hasRole("USER")

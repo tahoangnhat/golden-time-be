@@ -34,16 +34,19 @@ public class AuthController {
     private final JwtService jwtService;
     private final RefreshTokenService refreshTokens;
     private final BusinessDecisionMailer mailer;
+    private final AccountDeletionService accountDeletion;
     private final boolean secureRefreshCookie;
 
     public AuthController(JdbcTemplate jdbc, PasswordEncoder passwordEncoder, JwtService jwtService,
                           RefreshTokenService refreshTokens, BusinessDecisionMailer mailer,
+                          AccountDeletionService accountDeletion,
                           @Value("${app.jwt.refresh-token-secure:false}") boolean secureRefreshCookie) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.refreshTokens = refreshTokens;
         this.mailer = mailer;
+        this.accountDeletion = accountDeletion;
         this.secureRefreshCookie = secureRefreshCookie;
     }
 
@@ -149,6 +152,23 @@ public class AuthController {
         return new UserProfile(user.id(), user.email(), user.phone(), user.fullName(), user.role());
     }
 
+    @DeleteMapping("/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    @io.swagger.v3.oas.annotations.security.SecurityRequirement(name = "bearerAuth")
+    public void deleteMe(Authentication authentication, @Valid @RequestBody DeleteAccountRequest request,
+                         HttpServletResponse response) {
+        UserRow user = findUser(CurrentUser.id(authentication));
+        if (!"USER".equals(user.role())) {
+            throw ApiException.forbidden("Tài khoản doanh nghiệp hoặc quản trị cần liên hệ Golden Time để yêu cầu xóa.");
+        }
+        if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
+            throw ApiException.badRequest("Mật khẩu hiện tại không đúng.");
+        }
+        accountDeletion.deleteCustomerAccount(user.id());
+        clearRefreshCookie(response);
+    }
+
     private AuthResponse createSession(UserRow user, HttpServletResponse response) {
         RefreshTokenService.Session session = refreshTokens.issue(user.id());
         setRefreshCookie(response, session);
@@ -201,6 +221,7 @@ public class AuthController {
                                   @NotBlank @Size(max = 255) String fullName) {}
     public record UpdateProfileRequest(@NotBlank @Size(max = 255) String fullName,
                                        @Size(max = 32) String phone) {}
+    public record DeleteAccountRequest(@NotBlank @Size(min = 8, max = 128) String password) {}
     public record UserProfile(long id, String email, String phone, String fullName, String role) {}
     public record AuthResponse(String accessToken, String tokenType, long expiresInSeconds,
                                long refreshExpiresInSeconds, UserProfile user) {}

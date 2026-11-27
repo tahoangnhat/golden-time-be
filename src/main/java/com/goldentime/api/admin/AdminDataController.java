@@ -75,11 +75,11 @@ public class AdminDataController {
     @GetMapping("/orders")
     public List<OrderRow> orders() {
         return jdbc.query("""
-                SELECT o.id, u.full_name AS customer_name, s.name AS shop_name, o.total_amount,
+                SELECT o.id, COALESCE(u.full_name, 'Tài khoản đã xóa') AS customer_name, s.name AS shop_name, o.total_amount,
                        o.subtotal_amount, o.shipping_fee, o.status, o.payment_method, o.payment_status, o.note,
                        o.delivery_name, o.delivery_phone, o.delivery_address, o.created_at,
                        COUNT(oi.id) AS item_count
-                FROM orders o JOIN users u ON u.id = o.user_id JOIN shops s ON s.id = o.shop_id
+                FROM orders o LEFT JOIN users u ON u.id = o.user_id JOIN shops s ON s.id = o.shop_id
                 LEFT JOIN order_items oi ON oi.order_id = o.id
                 GROUP BY o.id, u.full_name, s.name
                 ORDER BY o.created_at DESC, o.id DESC
